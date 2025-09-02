@@ -10,7 +10,7 @@
 
 (function() {
     // --- Configurações ---
-    const limitTimeMs = 70 * 1000;
+    const limitTimeMs = 60 * 1000;
     const updateIntervalMs = 10;
     const formatTime = num => String(num).padStart(2, '0');
 
