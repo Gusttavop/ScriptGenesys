@@ -1,28 +1,504 @@
 // ==UserScript==
-// @name Genesys Helper Suite (Fix CPF)
+// @name Genesys Helper Suite
 // @namespace http://your-domain.com/
 // @version 3.6
-// @description Sistema unificado: Cronômetro, Busca Doc e Cópia Instantânea. Visual Escurecido. Correção de seleção de chat ativo.
+// @description Sistema unificado: Cronômetro, Busca Doc e Cópia Instantânea. Fix CPF Ativo.
 // @author AI Assistant
 // @match *://*/*
 // @grant GM_addStyle
 // ==/UserScript==
+// ==UserScript==
+// @name Cronômetro
+// @namespace
+// @version 3.1
+// @description Sistema unificado para cronômetro de conversas.
+// @author Gustavo
+// @match *://*/*
+// @grant GM_addStyle
+// ==/UserScript==
+
+(function() {
+    // --- Configurações ---
+    const limitTimeMs = 60 * 1000;
+    const updateIntervalMs = 10;
+    const formatTime = num => String(num).padStart(2, '0');
+
+    // Estilos para o cronômetro e número da conversa
+    const runningBgColor = 'rgba(255, 255, 255, 0.9)';
+    const runningTextColor = 'black';
+    const runningBorderColor = '#ccc';
+    const runningBoxShadow = '0 1px 3px rgba(0,0,0,0.1)';
+
+    const timerFontSize = '12px';
+    const timerPadding = '2px 5px';
+    const timerBorderRadius = '3px';
+
+    const pausedBgColor = 'rgba(255, 255, 255, 0.9)';
+    const pausedTextColor = 'red';
+    const pausedBorderColor = '#ccc';
+    const pausedBoxShadow = '0 1px 3px rgba(0,0,0,0.1)';
+
+    const completedBgColor = 'rgba(0, 0, 0, 1)'; // Fundo preto sólido
+    const completedTextColor = 'lime'; // Cor verde para o checkmark
+    const completedText = '✓';
+    const completedFontSize = '20px';
+    const completedPadding = '0px';
+    const completedBorderRadius = '5px';
+
+    const numberBgColor = runningBgColor;
+    const numberTextColor = runningTextColor;
+    const numberBorderColor = runningBorderColor;
+    const numberBoxShadow = runningBoxShadow;
+    const numberFontSize = '12px';
+    const numberPadding = '2px 5px';
+    const numberBorderRadius = '3px';
+
+    // ALTERAÇÃO AQUI: Ajusta a posição à direita para alinhar com o cronômetro
+    const numberRightPosition = '5px'; // Reduzido de 15px para 5px (mesma do cronômetro)
+    const numberTopPosition = '2px';
+
+    const conversationTimers = new Map();
+    let currentActiveConversationEl = null;
+
+    // --- Funções de Controle de Cronômetro Individual ---
+    function renderTime(timerDiv, elapsedTime, prefix = '') {
+        let totalSeconds = Math.floor(elapsedTime / 1000);
+        let minutes = Math.floor(totalSeconds / 60);
+        let seconds = totalSeconds % 60;
+        timerDiv.textContent = `${prefix}${formatTime(minutes)}:${formatTime(seconds)}`;
+    }
+
+    function pauseTimer(conversationEl) {
+        const timerData = conversationTimers.get(conversationEl);
+        if (timerData && !timerData.isPaused) {
+            clearInterval(timerData.timerIntervalId);
+            timerData.pausedAt = Date.now();
+            timerData.isPaused = true;
+            if (!timerData.timerDiv.classList.contains('timer-completed')) {
+                timerData.timerDiv.style.backgroundColor = pausedBgColor;
+                timerData.timerDiv.style.color = pausedTextColor;
+                timerData.timerDiv.style.borderColor = pausedBorderColor;
+                timerData.timerDiv.style.boxShadow = pausedBoxShadow;
+            }
+        }
+    }
+
+    function resumeTimer(conversationEl) {
+        const timerData = conversationTimers.get(conversationEl);
+        if (timerData && timerData.isPaused && !timerData.timerDiv.classList.contains('timer-completed')) {
+            timerData.startTime += (Date.now() - timerData.pausedAt);
+            timerData.isPaused = false;
+            timerData.timerIntervalId = setInterval(() => updateIndividualTimer(conversationEl), updateIntervalMs);
+            timerData.timerDiv.style.backgroundColor = runningBgColor;
+            timerData.timerDiv.style.color = runningTextColor;
+            timerData.timerDiv.style.borderColor = runningBorderColor;
+            timerData.timerDiv.style.boxShadow = runningBoxShadow;
+        }
+    }
+
+    function removeTimer(conversationEl) {
+        const timerData = conversationTimers.get(conversationEl);
+        if (timerData) {
+            clearInterval(timerData.timerIntervalId);
+            if (timerData.timerDiv && timerData.timerDiv.parentNode) {
+                timerData.timerDiv.remove();
+            }
+            if (timerData.numberDiv && timerData.numberDiv.parentNode) {
+                timerData.numberDiv.remove();
+            }
+            conversationTimers.delete(conversationEl);
+        }
+    }
+
+    function updateIndividualTimer(conversationEl) {
+        const timerData = conversationTimers.get(conversationEl);
+        if (!timerData || timerData.isPaused) return;
+
+        let elapsedTime = Date.now() - timerData.startTime;
+
+        if (elapsedTime >= limitTimeMs) {
+            clearInterval(timerData.timerIntervalId);
+            timerData.timerDiv.textContent = completedText;
+            timerData.timerDiv.style.backgroundColor = completedBgColor;
+            timerData.timerDiv.style.color = completedTextColor;
+            timerData.timerDiv.style.fontSize = completedFontSize;
+            timerData.timerDiv.style.borderColor = 'transparent';
+            timerData.timerDiv.style.boxShadow = 'none';
+            timerData.isPaused = true;
+            timerData.timerDiv.classList.add('timer-completed');
+
+            timerData.timerDiv.style.top = '20%';
+            timerData.timerDiv.style.right = '9px';
+            timerData.timerDiv.style.left = 'auto';
+            timerData.timerDiv.style.transform = 'translateY(-50%)';
+            timerData.timerDiv.style.width = 'fit-content';
+            timerData.timerDiv.style.textAlign = 'center';
+            timerData.timerDiv.style.padding = completedPadding;
+            timerData.timerDiv.style.borderRadius = completedBorderRadius;
+
+            console.log(`Cronômetro da conversa (ID: ${conversationEl.id || 'N/A'}) concluído: ✓`);
+            return;
+        }
+        renderTime(timerData.timerDiv, elapsedTime);
+    }
+
+    function createTimerAndNumberForConversation(conversationEl) {
+        let existingTimerDivInDOM = conversationEl.querySelector('.injected-conversation-timer');
+        let existingNumberDivInDOM = conversationEl.querySelector('.injected-conversation-number');
+
+        if (existingTimerDivInDOM || existingNumberDivInDOM) {
+            if (conversationTimers.has(conversationEl)) {
+                const existingTimerData = conversationTimers.get(conversationEl);
+                if (existingTimerData.timerDiv.classList.contains('timer-completed')) {
+                    clearInterval(existingTimerData.timerIntervalId);
+                    existingTimerData.startTime = Date.now();
+                    existingTimerData.pausedAt = Date.now();
+                    existingTimerData.isPaused = true;
+                    renderTime(existingTimerData.timerDiv, 0);
+                    existingTimerData.timerDiv.style.backgroundColor = pausedBgColor;
+                    existingTimerData.timerDiv.style.color = pausedTextColor;
+                    existingTimerData.timerDiv.style.fontSize = timerFontSize;
+                    existingTimerData.timerDiv.style.borderColor = pausedBorderColor;
+                    existingTimerData.timerDiv.style.boxShadow = pausedBoxShadow;
+                    existingTimerData.timerDiv.classList.remove('timer-completed');
+                    existingTimerData.timerDiv.style.padding = timerPadding;
+                    existingTimerData.timerDiv.style.borderRadius = timerBorderRadius;
+
+                    existingTimerData.timerDiv.style.top = '20%';
+                    existingTimerData.timerDiv.style.right = '9px';
+                    existingTimerData.timerDiv.style.left = 'auto';
+                    existingTimerData.timerDiv.style.transform = 'translateY(-50%)';
+                    existingTimerData.timerDiv.style.width = 'fit-content';
+                    existingTimerData.timerDiv.style.textAlign = 'center';
+                    existingTimerData.timerDiv.style.minWidth = '45px';
+
+                    if (existingTimerData.numberDiv) {
+                        existingTimerData.numberDiv.style.display = 'block';
+                        existingTimerData.numberDiv.style.top = numberTopPosition;
+                        existingTimerData.numberDiv.style.right = numberRightPosition; // Ajustado aqui também
+                        existingTimerData.numberDiv.style.left = 'auto';
+                        existingTimerData.numberDiv.style.transform = 'none';
+                    }
+                }
+                return existingTimerData;
+            } else {
+                console.warn("Script: Encontrado timer/número injetado 'órfão' no DOM para uma conversa. Removendo para recriar.");
+                if (existingTimerDivInDOM) existingTimerDivInDOM.remove();
+                if (existingNumberDivInDOM) existingNumberDivInDOM.remove();
+            }
+        }
+        if (conversationTimers.has(conversationEl)) {
+            return conversationTimers.get(conversationEl);
+        }
+
+        conversationEl.style.position = 'relative';
+
+        let timerDiv = document.createElement('div');
+        timerDiv.className = 'injected-conversation-timer';
+        timerDiv.style.position = 'absolute';
+        timerDiv.style.top = '20%';
+        timerDiv.style.right = '9px';
+        timerDiv.style.left = 'auto';
+        timerDiv.style.transform = 'translateY(-50%)';
+        timerDiv.style.backgroundColor = pausedBgColor;
+        timerDiv.style.color = pausedTextColor;
+        timerDiv.style.padding = timerPadding;
+        timerDiv.style.borderRadius = timerBorderRadius;
+        timerDiv.style.fontSize = timerFontSize;
+        timerDiv.style.fontFamily = 'monospace';
+        timerDiv.style.zIndex = '9999';
+        timerDiv.style.width = 'fit-content';
+        timerDiv.style.textAlign = 'center';
+        timerDiv.style.border = `1px solid ${pausedBorderColor}`;
+        timerDiv.style.boxShadow = pausedBoxShadow;
+        timerDiv.style.fontWeight = 'bold';
+        timerDiv.style.cursor = 'pointer';
+        timerDiv.style.userSelect = 'none';
+        timerDiv.style.minWidth = '45px';
+        conversationEl.appendChild(timerDiv);
+
+        function resetTimer(conversationEl) {
+            const timerData = conversationTimers.get(conversationEl);
+            if (!timerData) return;
+
+            clearInterval(timerData.timerIntervalId);
+            timerData.startTime = Date.now();
+            timerData.pausedAt = Date.now();
+            timerData.isPaused = true;
+
+            timerData.timerDiv.classList.remove('timer-completed');
+            timerData.timerDiv.style.backgroundColor = pausedBgColor;
+            timerData.timerDiv.style.color = pausedTextColor;
+            timerData.timerDiv.style.borderColor = pausedBorderColor;
+            timerData.timerDiv.style.boxShadow = pausedBoxShadow;
+            timerData.timerDiv.style.fontSize = timerFontSize;
+            timerData.timerDiv.style.padding = timerPadding;
+            timerData.timerDiv.style.borderRadius = timerBorderRadius;
+
+            renderTime(timerData.timerDiv, 0);
+        }
+
+        timerDiv.ondblclick = () => {
+            resetTimer(conversationEl);
+        };
+        
+        let clickCount = 0;
+        let clickTimeout = null;
+
+        timerDiv.onclick = () => {
+            clickCount++;
+
+            if (clickCount === 3) {
+                clearTimeout(clickTimeout);
+                clickCount = 0;
+                // Chama a função para alterar para o símbolo "V"
+                finalizeTimer(conversationEl);
+            } else {
+                if (clickTimeout) clearTimeout(clickTimeout);
+                clickTimeout = setTimeout(() => {
+                    clickCount = 0;
+                }, 400); // tempo para reconhecer os cliques consecutivos
+            }
+        };
+
+        function finalizeTimer(conversationEl) {
+            const timerData = conversationTimers.get(conversationEl);
+            if (!timerData) return;
+
+            clearInterval(timerData.timerIntervalId);
+            timerData.timerDiv.textContent = '✔'; // Símbolo de "V"
+            timerData.timerDiv.classList.add('timer-completed');
+
+            // Estilize conforme desejar para o timer finalizado
+            
+            timerData.timerDiv.textContent = completedText; // ✓
+            timerData.timerDiv.style.backgroundColor = completedBgColor;
+            timerData.timerDiv.style.color = completedTextColor;
+            timerData.timerDiv.style.fontSize = completedFontSize;
+            timerData.timerDiv.style.borderColor = 'transparent';
+            timerData.timerDiv.style.boxShadow = 'none';
+            timerData.isPaused = true;
+            timerData.timerDiv.classList.add('timer-completed');
+
+            timerData.timerDiv.style.top = '20%';
+            timerData.timerDiv.style.right = '9px';
+            timerData.timerDiv.style.left = 'auto';
+            timerData.timerDiv.style.transform = 'translateY(-50%)';
+            timerData.timerDiv.style.width = 'fit-content';
+            timerData.timerDiv.style.textAlign = 'center';
+            timerData.timerDiv.style.padding = completedPadding;
+            timerData.timerDiv.style.borderRadius = completedBorderRadius;
+        }
+
+        // Adiciona clique manual para pausar ou retomar o cronômetro
+        timerDiv.addEventListener('click', (e) => {
+            e.stopPropagation(); // Evita conflitos com outros eventos
+            const timerData = conversationTimers.get(conversationEl);
+            if (!timerData) return;
+
+            if (timerData.timerDiv.classList.contains('timer-completed')) {
+                return; // Ignora se já estiver concluído
+            }
+
+            if (timerData.isPaused) {
+                resumeTimer(conversationEl);
+            } else {
+                pauseTimer(conversationEl);
+            }
+        });
+
+        let numberDiv = document.createElement('div');
+        numberDiv.className = 'injected-conversation-number';
+        numberDiv.style.position = 'absolute';
+        numberDiv.style.top = numberTopPosition;
+        numberDiv.style.right = numberRightPosition; // AQUI ESTÁ A ALTERAÇÃO PRINCIPAL
+        numberDiv.style.left = 'auto';
+        numberDiv.style.transform = 'none';
+        numberDiv.style.backgroundColor = numberBgColor;
+        numberDiv.style.color = numberTextColor;
+        numberDiv.style.padding = numberPadding;
+        numberDiv.style.borderRadius = numberBorderRadius;
+        numberDiv.style.fontSize = numberFontSize;
+        numberDiv.style.fontFamily = 'sans-serif';
+        numberDiv.style.fontWeight = 'bold';
+        numberDiv.style.zIndex = '99999';
+        numberDiv.style.width = 'fit-content';
+        numberDiv.style.textAlign = 'center';
+        numberDiv.style.minWidth = '20px';
+        numberDiv.style.border = `1px solid ${numberBorderColor}`;
+        numberDiv.style.boxShadow = numberBoxShadow;
+        numberDiv.style.display = 'block';
+        conversationEl.appendChild(numberDiv);
+
+        const startTime = Date.now();
+        const timerData = {
+            timerDiv: timerDiv,
+            numberDiv: numberDiv,
+            startTime: startTime,
+            pausedAt: Date.now(),
+            timerIntervalId: null,
+            isPaused: true
+        };
+        conversationTimers.set(conversationEl, timerData);
+
+        if (timerData.numberDiv) {
+            timerData.numberDiv.remove();
+            timerData.numberDiv = null;
+        }
+
+        renderTime(timerDiv, 0);
+        return timerData;
+    }
+
+    function updateConversationNumbers() {
+        const existingConversations = Array.from(document.querySelectorAll('div.interaction-group'))
+            .filter(el => conversationTimers.has(el));
+
+        existingConversations.sort((a, b) => b.offsetTop - a.offsetTop);
+
+        existingConversations.forEach((conversationEl, index) => {
+            const timerData = conversationTimers.get(conversationEl);
+            if (timerData && timerData.numberDiv) {
+                // O número deve sempre ser exibido, independentemente do status do timer
+                timerData.numberDiv.textContent = (index + 1).toString();
+                timerData.numberDiv.style.backgroundColor = numberBgColor;
+                timerData.numberDiv.style.color = numberTextColor;
+                timerData.numberDiv.style.fontSize = numberFontSize;
+                timerData.numberDiv.style.display = 'block'; // Garante que seja sempre 'block'
+                timerData.numberDiv.style.border = `1px solid ${numberBorderColor}`;
+                timerData.numberDiv.style.boxShadow = numberBoxShadow;
+                timerData.numberDiv.style.right = numberRightPosition; // Garante que a posição seja atualizada também
+            }
+        });
+
+        // Limpa timers de conversas que não estão mais no DOM
+        conversationTimers.forEach((timerData, conversationEl) => {
+            if (!document.body.contains(conversationEl)) {
+                if (timerData.numberDiv) {
+                    timerData.numberDiv.remove();
+                }
+                clearInterval(timerData.timerIntervalId);
+                conversationTimers.delete(conversationEl);
+            }
+        });
+    }
+
+    function manageActiveTimers() {
+        const currentlySelectedConversation = document.querySelector('div.interaction-group.is-selected');
+
+        conversationTimers.forEach((timerData, conversationEl) => {
+            if (conversationEl !== currentlySelectedConversation && !timerData.isPaused && !timerData.timerDiv.classList.contains('timer-completed')) {
+                pauseTimer(conversationEl);
+            }
+        });
+
+        if (currentlySelectedConversation) {
+            if (!conversationTimers.has(currentlySelectedConversation)) {
+                createTimerAndNumberForConversation(currentlySelectedConversation);
+            }
+            if (!conversationTimers.get(currentlySelectedConversation).timerDiv.classList.contains('timer-completed')) {
+                resumeTimer(currentlySelectedConversation);
+            }
+            currentActiveConversationEl = currentlySelectedConversation;
+        } else {
+            currentActiveConversationEl = null;
+        }
+    }
+
+    // --- Lógica de Inicialização e Eventos ---
+    // Remove quaisquer elementos injetados de uma execução anterior (útil para recarga do script)
+    document.querySelectorAll('.injected-conversation-timer, .injected-conversation-number').forEach(el => el.remove());
+    conversationTimers.clear();
+
+    // Pequeno atraso para garantir que os elementos iniciais da página estejam carregados
+    setTimeout(() => {
+        const initialConversationElements = document.querySelectorAll('div.interaction-group');
+        if (initialConversationElements.length === 0) {
+            console.warn("Nenhum elemento de conversa com a classe 'interaction-group' encontrado na carga inicial. Isso pode ser normal se as conversas carregarem dinamicamente. O script continuará monitorando.");
+        } else {
+            initialConversationElements.forEach(createTimerAndNumberForConversation);
+            console.log(`Encontrados ${initialConversationElements.length} conversas existentes ao iniciar.`);
+        }
+        updateConversationNumbers(); // Atualiza os números logo no início
+        manageActiveTimers();       // Gerencia o estado dos timers
+    }, 500); // Meio segundo de atraso
+
+    const conversationsListContainer = document.body; // Observa o body para detectar mudanças em toda a estrutura
+    const observer = new MutationObserver((mutationsList, observer) => {
+        let shouldUpdateNumbers = false;
+        let shouldManageTimers = false;
+
+        for (const mutation of mutationsList) {
+            if (mutation.type === 'childList') {
+                if (mutation.addedNodes.length > 0) {
+                    for (const node of mutation.addedNodes) {
+                        // Verifica se o nó adicionado é uma conversa ou contém conversas
+                        if (node.nodeType === 1) { // Garante que é um Element
+                            if (node.matches('div.interaction-group')) {
+                                createTimerAndNumberForConversation(node);
+                                shouldUpdateNumbers = true;
+                                shouldManageTimers = true;
+                            }
+                            // Busca por conversas dentro dos nós adicionados (ex: um grande bloco de HTML foi adicionado)
+                            const newConversationElements = node.querySelectorAll('div.interaction-group');
+                            newConversationElements.forEach(newConvEl => {
+                                if (!conversationTimers.has(newConvEl)) {
+                                    createTimerAndNumberForConversation(newConvEl);
+                                    shouldUpdateNumbers = true;
+                                    shouldManageTimers = true;
+                                }
+                            });
+                        }
+                    }
+                }
+                if (mutation.removedNodes.length > 0) {
+                    for (const node of mutation.removedNodes) {
+                        // Remove timers de conversas que foram removidas do DOM
+                        if (node.nodeType === 1 && node.matches('div.interaction-group')) {
+                            removeTimer(node);
+                            shouldUpdateNumbers = true;
+                            shouldManageTimers = true;
+                        }
+                    }
+                }
+            }
+
+            if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                const changedElement = mutation.target;
+                // Se a classe de uma conversa mudou (ex: para 'is-selected')
+                if (changedElement.matches('div.interaction-group')) {
+                    shouldManageTimers = true;
+                }
+            }
+        }
+        // Executa as atualizações necessárias apenas uma vez por ciclo de mutação
+        if (shouldUpdateNumbers) {
+            updateConversationNumbers();
+        }
+        if (shouldManageTimers) {
+            manageActiveTimers();
+        }
+    });
+
+    // Inicia a observação de mudanças no DOM
+    observer.observe(conversationsListContainer, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+
+    console.log("Script de gerenciamento de cronômetros e numeração de conversas injetado. Ativação via classe 'is-selected'.");
+})();
 
 (function() {
     'use strict';
 
     // ==================== CONFIGURATION ====================
     const CONFIG = {
-        WATCHER_INTERVAL_MS: 1500,
-        // Parte da URL para identificar iframes de chat
-        IFRAME_PARTIAL_SRC: "messaging-gadget", 
+        WATCHER_INTERVAL_MS: 1000,
+        IFRAME_SRC: "https://apps.sae1.pure.cloud/messaging-gadget/messaging-gadget.html",
 
         DOC_SEARCH: {
             SELECTORS: {
-                // Seletores internos do iframe do chat
-                messageBody: '[data-automation-id="messaging-gadget-message-textbody"]',
-                systemMessage: 'p[data-automation-id="message-history-system-message"]',
-                container: '[data-automation-id="message-history"]'
+                iframe_chatContainer: '[data-automation-id="message-history"]',
+                iframe_messageBody: '[data-automation-id="messaging-gadget-message-textbody"]',
+                iframe_systemMessage: 'p[data-automation-id="message-history-system-message"]',
             },
             CLASSES: {
                 button: 'doc-search-btn-v3'
@@ -31,8 +507,9 @@
 
         COMBINED_COPY: {
             SELECTORS: {
-                main_actionsContainer: '.actions-container', // Container onde o botão será injetado
+                main_actionsContainer: '.actions-container',
                 main_originalCopyButton: '.copy-action-button',
+                main_participantName: '#interaction-header-participant-name',
             },
             CLASSES: {
                 button: 'combined-copy-btn-v3'
@@ -41,9 +518,7 @@
     };
 
     // ==================== STYLES ====================
-    // Adiciona estilos via JS puro para garantir que carreguem
-    const styleSheet = document.createElement("style");
-    styleSheet.textContent = `
+    const STYLES = `
         #copy-feedback-toast-v3 {
             position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
             background-color: #28a745; color: white; padding: 12px 20px;
@@ -51,14 +526,7 @@
             font-size: 16px; box-shadow: 0 4px 10px rgba(0,0,0,0.2);
             opacity: 0; pointer-events: none; transition: opacity 0.3s, bottom 0.3s;
         }
-        .doc-search-btn-v3 {
-            background-color: #6f42c1; color: white; border: none;
-            padding: 5px 10px; border-radius: 4px; margin-left: 8px;
-            cursor: pointer; font-weight: bold; font-size: 12px;
-        }
-        .doc-search-btn-v3:hover { background-color: #5a32a3; }
     `;
-    document.head.appendChild(styleSheet);
 
     // ==================== UTILITIES ====================
 
@@ -98,22 +566,15 @@
         static findDocuments(text) {
             if (typeof text !== 'string' || !text) return [];
             const documents = new Map();
-            // Regex ajustada para capturar formatos comuns
-            const docRegex = /(?:\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b)|(?:\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b)/g;
-            
+            const docRegex = /(?:\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b)|(?:\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b)/g;
             const matches = text.match(docRegex) || [];
-            
             for (const match of matches) {
                 const cleanMatch = match.replace(/\D/g, '');
-                
-                // Prioridade para CPF (11 dígitos)
                 if (cleanMatch.length === 11) {
                     if (!documents.has(cleanMatch) && this.validateCPF(cleanMatch)) {
                         documents.set(cleanMatch, { type: 'CPF', formatted: this.formatCPF(cleanMatch) });
                     }
-                } 
-                // CNPJ (14 dígitos)
-                else if (cleanMatch.length === 14) {
+                } else if (cleanMatch.length === 14) {
                     if (!documents.has(cleanMatch) && this.validateCNPJ(cleanMatch)) {
                         documents.set(cleanMatch, { type: 'CNPJ', formatted: this.formatCNPJ(cleanMatch) });
                     }
@@ -132,29 +593,22 @@
             this.feedbackTimeout = null;
         }
 
-        createPopup(title, bodyElement, borderColor = '#6f42c1') {
+        createPopup(title, bodyElement, borderColor = '#007bff') {
             this.removePopup();
             this.popupContainer = document.createElement('div');
-            
-            // Backdrop
             const backdrop = document.createElement('div');
             backdrop.style.cssText = `position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999;`;
-            
-            // Modal
             const modal = document.createElement('div');
-            modal.style.cssText = `position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:white; border:2px solid ${borderColor}; border-radius:10px; padding:20px; box-shadow:0 4px 20px rgba(0,0,0,0.3); z-index:10000; max-width:400px; max-height:500px; overflow-y:auto; font-family:Arial,sans-serif; min-width: 300px;`;
+            modal.style.cssText = `position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:white; border:2px solid ${borderColor}; border-radius:10px; padding:20px; box-shadow:0 4px 20px rgba(0,0,0,0.3); z-index:10000; max-width:400px; max-height:500px; overflow-y:auto; font-family:Arial,sans-serif;`;
             
-            // Header
             const header = document.createElement('div');
             header.style.cssText = `display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #eee; padding-bottom:10px;`;
-            
             const heading = document.createElement('h3');
             heading.textContent = title;
-            heading.style.cssText = `margin:0; color:${borderColor}; font-size: 16px;`;
-            
+            heading.style.cssText = `margin:0; color:${borderColor};`;
             const closeBtn = document.createElement('button');
             closeBtn.textContent = '×';
-            closeBtn.style.cssText = `background:#dc3545; color:white; border:none; border-radius:50%; width:25px; height:25px; cursor:pointer; font-size:18px; display:flex; align-items:center; justify-content:center; line-height: 1;`;
+            closeBtn.style.cssText = `background:#dc3545; color:white; border:none; border-radius:50%; width:30px; height:30px; cursor:pointer; font-size:16px; display:flex; align-items:center; justify-content:center;`;
             
             closeBtn.addEventListener('click', () => this.removePopup());
             backdrop.addEventListener('click', () => this.removePopup());
@@ -168,62 +622,45 @@
             document.body.appendChild(this.popupContainer);
         }
 
-        removePopup() {
-            if (this.popupContainer) {
-                this.popupContainer.remove();
-                this.popupContainer = null;
-            }
-        }
-
         showDocumentsPopup(documents) {
-            if (documents.length === 0) {
-                this.showFeedbackToast('❌ Nenhum documento válido encontrado nesta conversa.');
-                return;
-            }
-
             const listContainer = document.createElement('div');
-            
             documents.forEach(doc => {
                 const isCPF = doc.type === 'CPF';
                 const docElement = document.createElement('div');
                 docElement.style.cssText = `margin-bottom:10px; padding:10px; background:${isCPF ? '#e3f2fd' : '#f3e5f5'}; border-radius:5px; border-left:4px solid ${isCPF ? '#2196f3' : '#9c27b0'}; display:flex; justify-content:space-between; align-items:center;`;
                 
                 const textContainer = document.createElement('div');
-                textContainer.innerHTML = `<strong style="color:${isCPF ? '#1976d2' : '#7b1fa2'}">${doc.type}: </strong><span style="font-family:monospace; font-size: 14px;">${doc.formatted}</span>`;
+                textContainer.innerHTML = `<strong style="color:${isCPF ? '#1976d2' : '#7b1fa2'}">${doc.type}: </strong><span style="font-family:monospace">${doc.formatted}</span>`;
                 
                 const copyBtn = document.createElement('button');
-                copyBtn.textContent = '📋';
-                copyBtn.title = 'Copiar';
-                copyBtn.style.cssText = `background:#28a745; color:white; border:none; border-radius:4px; padding:5px 12px; cursor:pointer; font-size:14px; margin-left: 10px;`;
-                
-                // Closure garante que doc.formatted é o correto para este botão
+                copyBtn.textContent = '📋 Copiar';
+                copyBtn.style.cssText = `background:#28a745; color:white; border:none; border-radius:4px; padding:5px 10px; cursor:pointer; font-size:12px;`;
                 copyBtn.addEventListener('click', () => this.copyToClipboard(doc.formatted, copyBtn, false));
                 
                 docElement.append(textContainer, copyBtn);
                 listContainer.appendChild(docElement);
             });
-            this.createPopup(`📄 Documentos Encontrados (${documents.length})`, listContainer);
+            this.createPopup(`📄 Documentos (${documents.length})`, listContainer);
         }
 
         async copyToClipboard(text, buttonElement = null, closeModal = false) {
             try {
                 if (!text) throw new Error('Vazio');
                 await navigator.clipboard.writeText(text);
-                this.showFeedbackToast('✅ Copiado: ' + text);
+                this.showFeedbackToast('✅ Copiado!');
             } catch {
-                // Fallback
                 const ta = document.createElement('textarea');
                 ta.value = text;
                 document.body.appendChild(ta);
                 ta.select();
                 document.execCommand('copy');
                 ta.remove();
-                this.showFeedbackToast('✅ Copiado: ' + text);
+                this.showFeedbackToast('✅ Copiado!');
             }
 
             if (buttonElement) {
                 const originalText = buttonElement.textContent;
-                buttonElement.textContent = '✔';
+                buttonElement.textContent = '✅';
                 buttonElement.style.backgroundColor = '#17a2b8';
                 setTimeout(() => {
                     buttonElement.textContent = originalText;
@@ -237,123 +674,270 @@
 
         showFeedbackToast(message) {
             if (this.feedbackTimeout) clearTimeout(this.feedbackTimeout);
-            
             let feedbackEl = document.getElementById('copy-feedback-toast-v3');
             if (!feedbackEl) {
                 feedbackEl = document.createElement('div');
                 feedbackEl.id = 'copy-feedback-toast-v3';
                 document.body.appendChild(feedbackEl);
             }
-            
             feedbackEl.textContent = message;
-            feedbackEl.style.opacity = '1';
-            feedbackEl.style.bottom = '50px'; // Sobe um pouco
-            
+            setTimeout(() => {
+                feedbackEl.style.opacity = '1';
+                feedbackEl.style.bottom = '30px';
+                feedbackEl.style.pointerEvents = 'auto';
+            }, 10);
             this.feedbackTimeout = setTimeout(() => {
                 feedbackEl.style.opacity = '0';
                 feedbackEl.style.bottom = '20px';
+                feedbackEl.style.pointerEvents = 'none';
             }, 3000);
+        }
+
+        showErrorPopup(msg) { this.showInfoPopup('Erro', msg, '❌', '#dc3545'); }
+        showNoDocumentsPopup() { this.showInfoPopup('Vazio', 'Sem documentos válidos.', '⚠️', '#ffc107'); }
+        
+        showInfoPopup(title, message, icon, color) {
+            const body = document.createElement('div');
+            body.style.textAlign = 'center';
+            body.innerHTML = `<div style="font-size:48px">${icon}</div><p>${message}</p>`;
+            this.createPopup(title, body, color);
+        }
+        
+        removePopup() { this.popupContainer?.remove(); this.popupContainer = null; }
+    }
+
+    class ChatProcessor {
+        constructor(iframeDocument, uiManager) {
+            this.iframeDoc = iframeDocument;
+            this.uiManager = uiManager;
+        }
+
+        async findAndProcessDocuments() {
+            try {
+                const chatContainer = this.iframeDoc.querySelector(CONFIG.DOC_SEARCH.SELECTORS.iframe_chatContainer);
+                if (!chatContainer) throw new Error('Chat não carregado.');
+                
+                let attempts = 0;
+                await new Promise(r => {
+                    const i = setInterval(() => {
+                         const sysMsg = chatContainer.querySelector(CONFIG.DOC_SEARCH.SELECTORS.iframe_systemMessage);
+                         if ((sysMsg && sysMsg.offsetParent) || ++attempts > 20) { clearInterval(i); r(); }
+                         else chatContainer.scrollTop = 0;
+                    }, 50);
+                });
+                await new Promise(r => setTimeout(r, 200));
+
+                const msgs = Array.from(chatContainer.querySelectorAll(CONFIG.DOC_SEARCH.SELECTORS.iframe_messageBody))
+                                  .map(m => m.textContent).join('\n');
+                const docs = DocumentValidator.findDocuments(msgs);
+                
+                if (docs.length === 1) {
+                    await this.uiManager.copyToClipboard(docs[0].formatted);
+                    this.uiManager.showFeedbackToast(`Copiado: ${docs[0].formatted}`);
+                } else if (docs.length > 1) {
+                    this.uiManager.showDocumentsPopup(docs);
+                } else {
+                    this.uiManager.showNoDocumentsPopup();
+                }
+            } catch (e) { this.uiManager.showErrorPopup(e.message); }
         }
     }
 
-    // ==================== MAIN LOGIC ====================
-
-    class MainApp {
+    class ButtonFactory {
         constructor() {
-            this.ui = new UIManager();
+            this.uiManager = new UIManager();
+            this.icons = {
+                search: `<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.5-75.5T120-580q0-109 75.5-184.5T380-840q109 0 184.5 75.5T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-400q75 0 127.5-52.5T560-580q0-75-52.5-127.5T380-760q-75 0-127.5 52.5T200-580q0 75 52.5 127.5T380-400Z"/></svg>`,
+                copy: `<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M320-240q-33 0-56.5-23.5T240-320v-480q0-33 23.5-56.5T320-880h480q33 0 56.5 23.5T880-800v480q0 33-23.5 56.5T800-240H320Zm0-80h480v-480H320v480ZM160-80q-33 0-56.5-23.5T80-160v-560h80v560h560v80H160Zm160-720v480-480Z"/></svg>`,
+                loading: `<svg width="20" height="20" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><style>.spinner{transform-origin:center;animation:rot 1.2s linear infinite}.spinner circle{stroke-dasharray:0 150;animation:dash 1.5s ease-in-out infinite}@keyframes rot{100%{transform:rotate(360deg)}}@keyframes dash{0%{stroke-dasharray:0 150;stroke-dashoffset:0}50%{stroke-dasharray:42 150;stroke-dashoffset:-16}100%{stroke-dasharray:42 150;stroke-dashoffset:-59}}</style><g class="spinner"><circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" stroke-width="3"></circle></g></svg>`,
+                success: `<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="currentColor"><path d="M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z"/></svg>`
+            };
         }
 
-        // CORREÇÃO CRÍTICA: Busca o texto apenas do iframe VISÍVEL
-        getVisibleChatText() {
-            // Busca todos os iframes que parecem ser de chat
-            const iframes = document.querySelectorAll(`iframe`);
-            let activeIframe = null;
+        // AQUI: Estilos base escurecidos (#cbd6e2) e sem borda
+        applyBaseStyles(btn) {
+            Object.assign(btn.style, {
+                cursor: 'pointer', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                background: '#cbd6e2', // Cinza azulado mais escuro
+                borderRadius: '4px',
+                padding: '5px',
+                border: 'none',
+                marginLeft: '8px', 
+                opacity: '1', 
+                transition: '0.2s',
+                color: '#5d6770'       // Cor do ícone
+            });
+            
+            // Hover mais escuro para feedback
+            btn.onmouseenter = () => { if(!btn.disabled) btn.style.backgroundColor = '#b0bccb'; };
+            btn.onmouseleave = () => { if(!btn.disabled) btn.style.backgroundColor = '#cbd6e2'; };
+        }
 
-            // Filtra pelo iframe que está visível na tela
-            for (const iframe of iframes) {
-                // Verifica se o iframe tem tamanho (é visível) E se a URL corresponde a um chat
-                if (iframe.offsetWidth > 0 && iframe.offsetHeight > 0) {
-                     // Verifica se o source contem o gadget de mensagem, se definido
-                     if (iframe.src && iframe.src.includes(CONFIG.IFRAME_PARTIAL_SRC)) {
-                         activeIframe = iframe;
-                         break; // Assume que só há um chat ativo/visível por vez
-                     }
+        setButtonState(btn, state, icon, timeout = 0, defaultIcon = null) {
+            btn.disabled = (state === 'loading');
+            btn.innerHTML = state === 'loading' ? this.icons.loading : icon;
+            
+            if (state === 'success') {
+                btn.style.backgroundColor = '#28a745';
+                btn.style.color = '#ffffff'; 
+            } else if (state === 'error') {
+                btn.style.backgroundColor = '#dc3545';
+                btn.style.color = '#ffffff'; 
+            } else if (state === 'loading') {
+                btn.style.backgroundColor = '#cbd6e2';
+                btn.style.color = '#5d6770';
+            } else {
+                btn.style.backgroundColor = '#cbd6e2';
+                btn.style.color = '#5d6770'; 
+            }
+
+            if (timeout > 0) setTimeout(() => {
+                btn.disabled = false;
+                btn.innerHTML = defaultIcon;
+                btn.style.backgroundColor = '#cbd6e2';
+                btn.style.color = '#5d6770'; 
+            }, timeout);
+        }
+
+        createDocSearchButton() {
+            const btn = document.createElement('button');
+            btn.className = CONFIG.DOC_SEARCH.CLASSES.button;
+            btn.title = 'Buscar CPF/CNPJ';
+            btn.innerHTML = this.icons.search;
+            this.applyBaseStyles(btn);
+            
+            btn.onclick = async () => {
+                const app = window.genesysHelperSuiteInstance;
+                const iframes = app ? app.findTargetIframes() : [];
+                
+                // === CORREÇÃO: Busca o iframe que está visível ===
+                let activeIframe = null;
+                for (const frame of iframes) {
+                    if (frame.offsetWidth > 0 && frame.offsetHeight > 0) {
+                        activeIframe = frame;
+                        break;
+                    }
                 }
-            }
+                // Fallback: se nenhum visível, tenta o primeiro
+                if (!activeIframe) activeIframe = iframes[0];
 
-            if (!activeIframe) {
-                console.warn("Genesys Helper: Nenhum iframe de chat ativo encontrado.");
-                return "";
-            }
-
-            try {
-                const doc = activeIframe.contentDocument || activeIframe.contentWindow.document;
+                if (!activeIframe || !activeIframe.contentDocument) {
+                    this.uiManager.showErrorPopup('Chat não encontrado.');
+                    return;
+                }
                 
-                // Raspa mensagens de texto
-                const messages = Array.from(doc.querySelectorAll(CONFIG.DOC_SEARCH.SELECTORS.messageBody))
-                    .map(el => el.innerText)
-                    .join(' ');
-                
-                // Raspa mensagens de sistema (opcional, às vezes o CPF vem do URA)
-                const systemMessages = Array.from(doc.querySelectorAll(CONFIG.DOC_SEARCH.SELECTORS.systemMessage))
-                    .map(el => el.innerText)
-                    .join(' ');
-
-                return messages + " " + systemMessages;
-            } catch (e) {
-                console.error("Genesys Helper: Erro ao acessar conteúdo do iframe (Cross-Origin?).", e);
-                return "";
-            }
+                this.setButtonState(btn, 'loading');
+                await new ChatProcessor(activeIframe.contentDocument, this.uiManager).findAndProcessDocuments();
+                this.setButtonState(btn, 'default', this.icons.search);
+            };
+            return btn;
         }
 
-        handleDocSearch() {
-            const text = this.getVisibleChatText();
-            if (!text) {
-                this.ui.showFeedbackToast('⚠️ Não foi possível ler o chat ativo.');
-                return;
-            }
-            const docs = DocumentValidator.findDocuments(text);
-            this.ui.showDocumentsPopup(docs);
+        createCombinedCopyButton() {
+            const btn = document.createElement('button');
+            btn.className = CONFIG.COMBINED_COPY.CLASSES.button;
+            btn.title = 'Copiar Nome e Protocolo';
+            btn.innerHTML = this.icons.copy;
+            this.applyBaseStyles(btn);
+
+            btn.onclick = async () => {
+                this.setButtonState(btn, 'loading');
+                try {
+                    const nameEl = document.querySelector(CONFIG.COMBINED_COPY.SELECTORS.main_participantName);
+                    if (!nameEl) throw new Error('Nome não encontrado.');
+                    const name = nameEl.textContent.trim();
+
+                    // --- OTIMIZAÇÃO DE VELOCIDADE (XPath) ---
+                    let protocol = null;
+                    const xpath = "//*[contains(text(), 'Protocolo do contato')]";
+                    const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                    const protocolLabel = result.singleNodeValue;
+
+                    if (protocolLabel) {
+                        const text = protocolLabel.textContent;
+                        const match = text.match(/Protocolo do contato:\s*(\d+)/);
+                        if (match) {
+                            protocol = match[1];
+                        } else if (protocolLabel.nextElementSibling) {
+                             protocol = protocolLabel.nextElementSibling.textContent.trim();
+                        } else if (protocolLabel.parentElement) {
+                             const parentText = protocolLabel.parentElement.textContent;
+                             const matchP = parentText.match(/Protocolo do contato:\s*(\d+)/);
+                             if(matchP) protocol = matchP[1];
+                        }
+                    }
+
+                    // Fallback se XPath falhar
+                    if (!protocol) {
+                        const originalBtn = document.querySelector(CONFIG.COMBINED_COPY.SELECTORS.main_originalCopyButton);
+                        if (originalBtn) {
+                            originalBtn.click();
+                            await new Promise(r => setTimeout(r, 50)); 
+                            protocol = await navigator.clipboard.readText();
+                        }
+                    }
+
+                    if (!protocol) throw new Error('Protocolo não encontrado.');
+
+                    await navigator.clipboard.writeText(`${name}\n${protocol}`);
+                    this.setButtonState(btn, 'success', this.icons.success, 1500, this.icons.copy);
+
+                } catch (e) {
+                    console.error(e);
+                    this.uiManager.showErrorPopup('Falha ao copiar: ' + e.message);
+                    this.setButtonState(btn, 'error', this.icons.copy);
+                }
+            };
+            return btn;
+        }
+    }
+
+    class GenesysHelperSuite {
+        constructor() { this.bf = new ButtonFactory(); }
+        init() {
+            if (typeof GM_addStyle === 'function') GM_addStyle(STYLES);
+            else { const s = document.createElement("style"); s.innerText = STYLES; document.head.appendChild(s); }
+            this.startWatcher();
+        }
+
+        findTargetIframes(root = document) {
+            let res = [];
+            root.querySelectorAll('iframe').forEach(f => { if(f.src.startsWith(CONFIG.IFRAME_SRC)) res.push(f); });
+            root.querySelectorAll('*').forEach(el => { if(el.shadowRoot) res = res.concat(this.findTargetIframes(el.shadowRoot)); });
+            return res;
         }
 
         injectButtons() {
-            // Injeta o botão na barra de ações principal se ainda não existir
-            // Nota: O seletor .actions-container pode variar dependendo da versão do Genesys.
-            // O ideal é buscar um container comum no cabeçalho da interação.
-            const containers = document.querySelectorAll(CONFIG.COMBINED_COPY.SELECTORS.main_actionsContainer);
-            
-            containers.forEach(container => {
-                // Verifica se o container está visível (pertence à aba ativa)
-                if (container.offsetParent !== null && !container.querySelector(`.${CONFIG.DOC_SEARCH.CLASSES.button}`)) {
-                    
-                    const btn = document.createElement('button');
-                    btn.className = CONFIG.DOC_SEARCH.CLASSES.button;
-                    btn.textContent = '🔍 Docs';
-                    btn.title = 'Buscar CPF/CNPJ na conversa ativa';
-                    btn.type = 'button'; // Previne submit de form se houver
-                    
-                    btn.onclick = (e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        this.handleDocSearch();
-                    };
+            const container = document.querySelector(CONFIG.COMBINED_COPY.SELECTORS.main_actionsContainer);
+            if (!container) return;
 
-                    // Adiciona no início ou fim do container
-                    container.appendChild(btn);
-                }
-            });
+            if (!container.querySelector(`.${CONFIG.DOC_SEARCH.CLASSES.button}`)) {
+                container.appendChild(this.bf.createDocSearchButton());
+            }
+
+            if (!container.querySelector(`.${CONFIG.COMBINED_COPY.CLASSES.button}`)) {
+                container.appendChild(this.bf.createCombinedCopyButton());
+            }
+            
+            // Reordenamento forçado: Nativos > DocSearch > CombinedCopy
+            const docBtn = container.querySelector(`.${CONFIG.DOC_SEARCH.CLASSES.button}`);
+            const copyBtn = container.querySelector(`.${CONFIG.COMBINED_COPY.CLASSES.button}`);
+            if (docBtn && copyBtn && docBtn.nextElementSibling !== copyBtn) {
+                container.appendChild(copyBtn);
+            }
         }
 
-        start() {
-            console.log('Genesys Helper Suite iniciado.');
-            setInterval(() => {
-                this.injectButtons();
-            }, CONFIG.WATCHER_INTERVAL_MS);
+        startWatcher() {
+            const obs = new MutationObserver(() => this.injectButtons());
+            obs.observe(document.body, { childList: true, subtree: true });
+            setInterval(() => this.injectButtons(), 1500);
         }
     }
 
-    // Inicia a aplicação
-    const app = new MainApp();
-    app.start();
-
+    const app = new GenesysHelperSuite();
+    window.genesysHelperSuiteInstance = app;
+    app.init();
 })();
