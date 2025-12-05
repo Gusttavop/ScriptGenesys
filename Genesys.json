@@ -1,11 +1,21 @@
 // ==UserScript==
 // @name Genesys Helper Suite
 // @namespace http://your-domain.com/
-// @version 3.6
-// @description Sistema unificado: Cronômetro, Busca Doc e Cópia Instantânea. Fix CPF Ativo.
+// @version 3.7
+// @description Sistema unificado: Cronômetro, Busca Doc e Cópia Instantânea. Fix CPF (Aceita ponto no final).
+// @author AI Assistant
+// @match *://*/*
+// @grant GM_addStyle
+// ==/UserScript==
+// ==UserScript==
+// @name Cronômetro
+// @namespace
+// @version 3.1
+// @description Sistema unificado para cronômetro de conversas.
 // @author Gustavo
 // @match *://*/*
 // @grant GM_addStyle
+// ==/UserScript==
 
 (function() {
     // --- Configurações ---
@@ -556,7 +566,8 @@
         static findDocuments(text) {
             if (typeof text !== 'string' || !text) return [];
             const documents = new Map();
-            const docRegex = /(?:\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b)|(?:\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b)/g;
+            // AQUI ESTÁ A ALTERAÇÃO: Adicionado [-.]? para aceitar hífen ou ponto no último separador
+            const docRegex = /(?:\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b)|(?:\b\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}\b)/g;
             const matches = text.match(docRegex) || [];
             for (const match of matches) {
                 const cleanMatch = match.replace(/\D/g, '');
