@@ -3,19 +3,9 @@
 // @namespace http://your-domain.com/
 // @version 3.6
 // @description Sistema unificado: Cronômetro, Busca Doc e Cópia Instantânea. Fix CPF Ativo.
-// @author AI Assistant
-// @match *://*/*
-// @grant GM_addStyle
-// ==/UserScript==
-// ==UserScript==
-// @name Cronômetro
-// @namespace
-// @version 3.1
-// @description Sistema unificado para cronômetro de conversas.
 // @author Gustavo
 // @match *://*/*
 // @grant GM_addStyle
-// ==/UserScript==
 
 (function() {
     // --- Configurações ---
