@@ -1,22 +1,16 @@
 // ==UserScript==
-// @name Genesys Helper Suite
+// @name Genesys Helper Suite & Timer
 // @namespace http://your-domain.com/
-// @version 3.7
-// @description Sistema unificado: Cronômetro, Busca Doc e Cópia Instantânea. Fix CPF (Aceita ponto no final).
+// @version 4.0
+// @description Sistema unificado: Cronômetro, Busca Doc e Cópia Instantânea (Visual Ajustado).
 // @author AI Assistant
 // @match *://*/*
 // @grant GM_addStyle
 // ==/UserScript==
-// ==UserScript==
-// @name Cronômetro
-// @namespace
-// @version 3.1
-// @description Sistema unificado para cronômetro de conversas.
-// @author Gustavo
-// @match *://*/*
-// @grant GM_addStyle
-// ==/UserScript==
 
+// =================================================================
+// PARTE 1: CRONÔMETRO (Mantido original)
+// =================================================================
 (function() {
     // --- Configurações ---
     const limitTimeMs = 60 * 1000;
@@ -53,8 +47,7 @@
     const numberPadding = '2px 5px';
     const numberBorderRadius = '3px';
 
-    // ALTERAÇÃO AQUI: Ajusta a posição à direita para alinhar com o cronômetro
-    const numberRightPosition = '5px'; // Reduzido de 15px para 5px (mesma do cronômetro)
+    const numberRightPosition = '5px';
     const numberTopPosition = '2px';
 
     const conversationTimers = new Map();
@@ -175,7 +168,7 @@
                     if (existingTimerData.numberDiv) {
                         existingTimerData.numberDiv.style.display = 'block';
                         existingTimerData.numberDiv.style.top = numberTopPosition;
-                        existingTimerData.numberDiv.style.right = numberRightPosition; // Ajustado aqui também
+                        existingTimerData.numberDiv.style.right = numberRightPosition;
                         existingTimerData.numberDiv.style.left = 'auto';
                         existingTimerData.numberDiv.style.transform = 'none';
                     }
@@ -251,13 +244,12 @@
             if (clickCount === 3) {
                 clearTimeout(clickTimeout);
                 clickCount = 0;
-                // Chama a função para alterar para o símbolo "V"
                 finalizeTimer(conversationEl);
             } else {
                 if (clickTimeout) clearTimeout(clickTimeout);
                 clickTimeout = setTimeout(() => {
                     clickCount = 0;
-                }, 400); // tempo para reconhecer os cliques consecutivos
+                }, 400);
             }
         };
 
@@ -266,12 +258,10 @@
             if (!timerData) return;
 
             clearInterval(timerData.timerIntervalId);
-            timerData.timerDiv.textContent = '✔'; // Símbolo de "V"
+            timerData.timerDiv.textContent = '✔';
             timerData.timerDiv.classList.add('timer-completed');
 
-            // Estilize conforme desejar para o timer finalizado
-            
-            timerData.timerDiv.textContent = completedText; // ✓
+            timerData.timerDiv.textContent = completedText;
             timerData.timerDiv.style.backgroundColor = completedBgColor;
             timerData.timerDiv.style.color = completedTextColor;
             timerData.timerDiv.style.fontSize = completedFontSize;
@@ -290,14 +280,13 @@
             timerData.timerDiv.style.borderRadius = completedBorderRadius;
         }
 
-        // Adiciona clique manual para pausar ou retomar o cronômetro
         timerDiv.addEventListener('click', (e) => {
-            e.stopPropagation(); // Evita conflitos com outros eventos
+            e.stopPropagation();
             const timerData = conversationTimers.get(conversationEl);
             if (!timerData) return;
 
             if (timerData.timerDiv.classList.contains('timer-completed')) {
-                return; // Ignora se já estiver concluído
+                return;
             }
 
             if (timerData.isPaused) {
@@ -311,7 +300,7 @@
         numberDiv.className = 'injected-conversation-number';
         numberDiv.style.position = 'absolute';
         numberDiv.style.top = numberTopPosition;
-        numberDiv.style.right = numberRightPosition; // AQUI ESTÁ A ALTERAÇÃO PRINCIPAL
+        numberDiv.style.right = numberRightPosition;
         numberDiv.style.left = 'auto';
         numberDiv.style.transform = 'none';
         numberDiv.style.backgroundColor = numberBgColor;
@@ -359,19 +348,17 @@
         existingConversations.forEach((conversationEl, index) => {
             const timerData = conversationTimers.get(conversationEl);
             if (timerData && timerData.numberDiv) {
-                // O número deve sempre ser exibido, independentemente do status do timer
                 timerData.numberDiv.textContent = (index + 1).toString();
                 timerData.numberDiv.style.backgroundColor = numberBgColor;
                 timerData.numberDiv.style.color = numberTextColor;
                 timerData.numberDiv.style.fontSize = numberFontSize;
-                timerData.numberDiv.style.display = 'block'; // Garante que seja sempre 'block'
+                timerData.numberDiv.style.display = 'block';
                 timerData.numberDiv.style.border = `1px solid ${numberBorderColor}`;
                 timerData.numberDiv.style.boxShadow = numberBoxShadow;
-                timerData.numberDiv.style.right = numberRightPosition; // Garante que a posição seja atualizada também
+                timerData.numberDiv.style.right = numberRightPosition;
             }
         });
 
-        // Limpa timers de conversas que não estão mais no DOM
         conversationTimers.forEach((timerData, conversationEl) => {
             if (!document.body.contains(conversationEl)) {
                 if (timerData.numberDiv) {
@@ -405,25 +392,21 @@
         }
     }
 
-    // --- Lógica de Inicialização e Eventos ---
-    // Remove quaisquer elementos injetados de uma execução anterior (útil para recarga do script)
     document.querySelectorAll('.injected-conversation-timer, .injected-conversation-number').forEach(el => el.remove());
     conversationTimers.clear();
 
-    // Pequeno atraso para garantir que os elementos iniciais da página estejam carregados
     setTimeout(() => {
         const initialConversationElements = document.querySelectorAll('div.interaction-group');
         if (initialConversationElements.length === 0) {
-            console.warn("Nenhum elemento de conversa com a classe 'interaction-group' encontrado na carga inicial. Isso pode ser normal se as conversas carregarem dinamicamente. O script continuará monitorando.");
+            console.warn("Nenhum elemento de conversa encontrado na carga inicial.");
         } else {
             initialConversationElements.forEach(createTimerAndNumberForConversation);
-            console.log(`Encontrados ${initialConversationElements.length} conversas existentes ao iniciar.`);
         }
-        updateConversationNumbers(); // Atualiza os números logo no início
-        manageActiveTimers();       // Gerencia o estado dos timers
-    }, 500); // Meio segundo de atraso
+        updateConversationNumbers();
+        manageActiveTimers();
+    }, 500);
 
-    const conversationsListContainer = document.body; // Observa o body para detectar mudanças em toda a estrutura
+    const conversationsListContainer = document.body;
     const observer = new MutationObserver((mutationsList, observer) => {
         let shouldUpdateNumbers = false;
         let shouldManageTimers = false;
@@ -432,14 +415,12 @@
             if (mutation.type === 'childList') {
                 if (mutation.addedNodes.length > 0) {
                     for (const node of mutation.addedNodes) {
-                        // Verifica se o nó adicionado é uma conversa ou contém conversas
-                        if (node.nodeType === 1) { // Garante que é um Element
+                        if (node.nodeType === 1) {
                             if (node.matches('div.interaction-group')) {
                                 createTimerAndNumberForConversation(node);
                                 shouldUpdateNumbers = true;
                                 shouldManageTimers = true;
                             }
-                            // Busca por conversas dentro dos nós adicionados (ex: um grande bloco de HTML foi adicionado)
                             const newConversationElements = node.querySelectorAll('div.interaction-group');
                             newConversationElements.forEach(newConvEl => {
                                 if (!conversationTimers.has(newConvEl)) {
@@ -453,7 +434,6 @@
                 }
                 if (mutation.removedNodes.length > 0) {
                     for (const node of mutation.removedNodes) {
-                        // Remove timers de conversas que foram removidas do DOM
                         if (node.nodeType === 1 && node.matches('div.interaction-group')) {
                             removeTimer(node);
                             shouldUpdateNumbers = true;
@@ -465,13 +445,11 @@
 
             if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
                 const changedElement = mutation.target;
-                // Se a classe de uma conversa mudou (ex: para 'is-selected')
                 if (changedElement.matches('div.interaction-group')) {
                     shouldManageTimers = true;
                 }
             }
         }
-        // Executa as atualizações necessárias apenas uma vez por ciclo de mutação
         if (shouldUpdateNumbers) {
             updateConversationNumbers();
         }
@@ -480,12 +458,14 @@
         }
     });
 
-    // Inicia a observação de mudanças no DOM
     observer.observe(conversationsListContainer, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
 
-    console.log("Script de gerenciamento de cronômetros e numeração de conversas injetado. Ativação via classe 'is-selected'.");
+    console.log("Script Timer OK.");
 })();
 
+// =================================================================
+// PARTE 2: HELPER SUITE (COR DO BOTÃO AJUSTADA PARA MAIS CLARO)
+// =================================================================
 (function() {
     'use strict';
 
@@ -566,7 +546,6 @@
         static findDocuments(text) {
             if (typeof text !== 'string' || !text) return [];
             const documents = new Map();
-            // AQUI ESTÁ A ALTERAÇÃO: Adicionado [-.]? para aceitar hífen ou ponto no último separador
             const docRegex = /(?:\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b)|(?:\b\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}\b)/g;
             const matches = text.match(docRegex) || [];
             for (const match of matches) {
@@ -721,15 +700,15 @@
                 let attempts = 0;
                 await new Promise(r => {
                     const i = setInterval(() => {
-                         const sysMsg = chatContainer.querySelector(CONFIG.DOC_SEARCH.SELECTORS.iframe_systemMessage);
-                         if ((sysMsg && sysMsg.offsetParent) || ++attempts > 20) { clearInterval(i); r(); }
-                         else chatContainer.scrollTop = 0;
+                          const sysMsg = chatContainer.querySelector(CONFIG.DOC_SEARCH.SELECTORS.iframe_systemMessage);
+                          if ((sysMsg && sysMsg.offsetParent) || ++attempts > 20) { clearInterval(i); r(); }
+                          else chatContainer.scrollTop = 0;
                     }, 50);
                 });
                 await new Promise(r => setTimeout(r, 200));
 
                 const msgs = Array.from(chatContainer.querySelectorAll(CONFIG.DOC_SEARCH.SELECTORS.iframe_messageBody))
-                                  .map(m => m.textContent).join('\n');
+                                 .map(m => m.textContent).join('\n');
                 const docs = DocumentValidator.findDocuments(msgs);
                 
                 if (docs.length === 1) {
@@ -755,26 +734,26 @@
             };
         }
 
-        // AQUI: Estilos base escurecidos (#cbd6e2) e sem borda
+        // AQUI: Estilos base atualizados para #dae0e5 (mais claro)
         applyBaseStyles(btn) {
             Object.assign(btn.style, {
                 cursor: 'pointer', 
                 display: 'flex', 
                 alignItems: 'center', 
                 justifyContent: 'center',
-                background: '#cbd6e2', // Cinza azulado mais escuro
+                background: '#dae0e5', // << ALTERADO: Cor mais clara (Cinza suave)
                 borderRadius: '4px',
                 padding: '5px',
                 border: 'none',
                 marginLeft: '8px', 
                 opacity: '1', 
                 transition: '0.2s',
-                color: '#5d6770'       // Cor do ícone
+                color: '#263238'
             });
             
-            // Hover mais escuro para feedback
-            btn.onmouseenter = () => { if(!btn.disabled) btn.style.backgroundColor = '#b0bccb'; };
-            btn.onmouseleave = () => { if(!btn.disabled) btn.style.backgroundColor = '#cbd6e2'; };
+            // Hover levemente mais escuro para feedback
+            btn.onmouseenter = () => { if(!btn.disabled) btn.style.backgroundColor = '#c8ced3'; };
+            btn.onmouseleave = () => { if(!btn.disabled) btn.style.backgroundColor = '#dae0e5'; };
         }
 
         setButtonState(btn, state, icon, timeout = 0, defaultIcon = null) {
@@ -788,18 +767,18 @@
                 btn.style.backgroundColor = '#dc3545';
                 btn.style.color = '#ffffff'; 
             } else if (state === 'loading') {
-                btn.style.backgroundColor = '#cbd6e2';
-                btn.style.color = '#5d6770';
+                btn.style.backgroundColor = '#dae0e5'; // Manter a cor clara no loading
+                btn.style.color = '#263238';
             } else {
-                btn.style.backgroundColor = '#cbd6e2';
-                btn.style.color = '#5d6770'; 
+                btn.style.backgroundColor = '#dae0e5'; // Manter a cor clara no estado normal
+                btn.style.color = '#263238';
             }
 
             if (timeout > 0) setTimeout(() => {
                 btn.disabled = false;
                 btn.innerHTML = defaultIcon;
-                btn.style.backgroundColor = '#cbd6e2';
-                btn.style.color = '#5d6770'; 
+                btn.style.backgroundColor = '#dae0e5'; // Resetar para cor clara
+                btn.style.color = '#263238';
             }, timeout);
         }
 
@@ -814,7 +793,6 @@
                 const app = window.genesysHelperSuiteInstance;
                 const iframes = app ? app.findTargetIframes() : [];
                 
-                // === CORREÇÃO: Busca o iframe que está visível ===
                 let activeIframe = null;
                 for (const frame of iframes) {
                     if (frame.offsetWidth > 0 && frame.offsetHeight > 0) {
@@ -822,7 +800,6 @@
                         break;
                     }
                 }
-                // Fallback: se nenhum visível, tenta o primeiro
                 if (!activeIframe) activeIframe = iframes[0];
 
                 if (!activeIframe || !activeIframe.contentDocument) {
@@ -851,7 +828,6 @@
                     if (!nameEl) throw new Error('Nome não encontrado.');
                     const name = nameEl.textContent.trim();
 
-                    // --- OTIMIZAÇÃO DE VELOCIDADE (XPath) ---
                     let protocol = null;
                     const xpath = "//*[contains(text(), 'Protocolo do contato')]";
                     const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
@@ -871,7 +847,6 @@
                         }
                     }
 
-                    // Fallback se XPath falhar
                     if (!protocol) {
                         const originalBtn = document.querySelector(CONFIG.COMBINED_COPY.SELECTORS.main_originalCopyButton);
                         if (originalBtn) {
@@ -923,7 +898,6 @@
                 container.appendChild(this.bf.createCombinedCopyButton());
             }
             
-            // Reordenamento forçado: Nativos > DocSearch > CombinedCopy
             const docBtn = container.querySelector(`.${CONFIG.DOC_SEARCH.CLASSES.button}`);
             const copyBtn = container.querySelector(`.${CONFIG.COMBINED_COPY.CLASSES.button}`);
             if (docBtn && copyBtn && docBtn.nextElementSibling !== copyBtn) {
