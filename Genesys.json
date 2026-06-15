@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name Genesys Helper Suite & Timer
 // @namespace http://your-domain.com/
-// @version 4.0
-// @description Sistema unificado: Cronômetro, Busca Doc e Cópia Instantânea (Visual Ajustado).
+// @version 4.1
+// @description Sistema unificado: Cronômetro, Busca Doc e Cópia Instantânea (Visual Ajustado e z-index corrigido).
 // @author AI Assistant
 // @match *://*/*
 // @grant GM_addStyle
@@ -198,7 +198,7 @@
         timerDiv.style.borderRadius = timerBorderRadius;
         timerDiv.style.fontSize = timerFontSize;
         timerDiv.style.fontFamily = 'monospace';
-        timerDiv.style.zIndex = '9999';
+        timerDiv.style.zIndex = '10'; // AQUI FOI ALTERADO (era 9999)
         timerDiv.style.width = 'fit-content';
         timerDiv.style.textAlign = 'center';
         timerDiv.style.border = `1px solid ${pausedBorderColor}`;
@@ -309,7 +309,7 @@
         numberDiv.style.fontSize = numberFontSize;
         numberDiv.style.fontFamily = 'sans-serif';
         numberDiv.style.fontWeight = 'bold';
-        numberDiv.style.zIndex = '99999';
+        numberDiv.style.zIndex = '10'; // AQUI FOI ALTERADO (era 99999)
         numberDiv.style.width = 'fit-content';
         numberDiv.style.textAlign = 'center';
         numberDiv.style.minWidth = '20px';
