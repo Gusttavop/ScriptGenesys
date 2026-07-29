@@ -915,3 +915,448 @@
     window.genesysHelperSuiteInstance = app;
     app.init();
 })();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ==UserScript==
+// @name         Mini Dashboard Flutuante (Apenas Dashboard)
+// @namespace    http://tampermonkey.net/
+// @version      2.3
+// @description  Dashboard com cálculo REAL de TMA, memória F5 e Avaliação.
+// @match        *://*/* 
+// @grant        none
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // 1. INJETA O CSS 
+    const style = document.createElement('style');
+    style.innerHTML = `
+        :root { 
+            --bg-primary: #1c1c1c; 
+            --bg-secondary: #2a2a2a; 
+            --bg-hover: #3a3a3a;
+            --text-primary: #ffffff; 
+            --text-secondary: #999999; 
+            --border-color: #404040; 
+            --shadow-color: rgba(0,0,0,0.6); 
+            --progress-track: #333333;
+            --progress-fill: #61dafb; 
+        }
+        
+        #mini-dashboard { 
+            position: fixed; 
+            bottom: 20px; 
+            left: 20px; 
+            background: var(--bg-primary); color: var(--text-primary); 
+            border: 1px solid var(--border-color); 
+            box-shadow: 0 6px 20px var(--shadow-color); 
+            z-index: 999999; display: flex; flex-direction: column; 
+            transition: width 0.2s, border-radius 0.2s, background-color 0.2s; 
+            user-select: none; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; 
+            border-radius: 8px;
+        }
+        
+        #mini-dashboard.expanded { width: 285px; cursor: default; }
+        
+        /* MODO PÍLULA */
+        #mini-dashboard.collapsed { 
+            width: max-content; 
+            min-width: 0; 
+            height: 32px; 
+            border-radius: 50px; 
+            overflow: hidden; 
+            background-color: var(--bg-primary); 
+            border: 1px solid var(--border-color); 
+            cursor: pointer;
+        }
+        
+        .dashboard-header { 
+            display: flex; align-items: center; justify-content: space-between; 
+            padding: 10px 14px; 
+        }
+        
+        #mini-dashboard.expanded .dashboard-header { 
+            border-bottom: 1px solid var(--border-color);
+            padding: 8px 12px;
+            cursor: move; 
+        }
+        
+        #mini-dashboard.collapsed .dashboard-header { 
+            padding: 0 14px; 
+            height: 100%;
+            justify-content: center;
+            cursor: pointer;
+        }
+        
+        .counter-display { display: flex; align-items: center; flex-grow: 1; }
+        #mini-dashboard.expanded .counter-display { margin-right: 12px; }
+        #mini-dashboard.collapsed .counter-display { margin-right: 0; }
+        
+        .counter-text { font-weight: 700; font-size: 1.05em; white-space: nowrap; letter-spacing: 0.5px; }
+        #mini-dashboard.expanded .counter-text { margin-right: 12px; }
+        #mini-dashboard.collapsed .counter-text { margin-right: 0; font-size: 1em; } 
+        
+        .progress-bar-container { 
+            flex-grow: 1; height: 6px; 
+            background-color: var(--progress-track); 
+            border-radius: 3px; overflow: hidden; display: none; 
+        }
+        #mini-dashboard.expanded .progress-bar-container { display: block; }
+        .progress-bar { background-color: var(--progress-fill); height: 100%; width: 0%; transition: width 0.5s ease-out; }
+        
+        .dashboard-controls { display: flex; gap: 4px; }
+        #mini-dashboard.collapsed .dashboard-controls { display: none; }
+        
+        .compact-btn { 
+            background: var(--bg-primary); 
+            border: 1px solid var(--border-color); 
+            color: var(--text-secondary); 
+            border-radius: 4px; cursor: pointer; 
+            height: 24px; width: 24px; 
+            display: flex; align-items: center; justify-content: center; padding: 0; 
+            transition: all 0.2s;
+        }
+        .compact-btn:hover { color: var(--text-primary); background-color: var(--bg-hover); border-color: #555; }
+        
+        .dashboard-content { padding: 10px 12px; display: none; }
+        #mini-dashboard.expanded .dashboard-content { display: block; }
+        
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        
+        .stat-item { 
+            background-color: var(--bg-secondary); 
+            padding: 8px 6px; 
+            border-radius: 6px; 
+            text-align: center; 
+        }
+        .stat-item span { display: block; color: var(--text-secondary); font-size: 0.75em; margin-bottom: 4px; letter-spacing: 0.3px; }
+        .stat-item strong { font-size: 1em; font-weight: 700; color: var(--text-primary); display: flex; justify-content: center; align-items: center; gap: 4px; }
+    `;
+    document.head.appendChild(style);
+
+    // 2. INJETA O HTML
+    const dashboardContainer = document.createElement('div');
+    dashboardContainer.innerHTML = `
+        <div id="mini-dashboard" class="collapsed">
+            <div class="dashboard-header" id="drag-handle">
+                <div class="counter-display">
+                    <span class="counter-text" id="ui-count">0/49</span>
+                    <div class="progress-bar-container"><div class="progress-bar" id="ui-progress"></div></div>
+                </div>
+                <div class="dashboard-controls">
+                    <button class="compact-btn" id="btn-edit" title="Ajustar Contagem">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 13px; height: 13px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                    </button>
+                    <!-- O X AGORA É O BOTÃO DE MINIMIZAR -->
+                    <button class="compact-btn" id="btn-close" title="Minimizar">X</button>
+                </div>
+            </div>
+            <div class="dashboard-content">
+                <div class="stats-grid">
+                    <div class="stat-item"><span>Conversas (Únicas)</span><strong id="ui-conversas">0</strong></div>
+                    <div class="stat-item"><span>TMA</span><strong id="ui-tma">00:00</strong></div>
+                    <div class="stat-item"><span>Avaliação (Término)</span><strong id="ui-avaliacao">0</strong></div>
+                    <div class="stat-item"><span>Balão (Término)</span><strong id="ui-balao">0</strong></div>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(dashboardContainer);
+
+    // --- 3. SISTEMA DE MEMÓRIA (LOCAL STORAGE) ---
+    const KEY_CONVOS = 'genesys_dash_convos';
+    const KEY_BALAO = 'genesys_dash_balao';
+    const KEY_AVALIACAO = 'genesys_dash_avaliacao'; 
+    const KEY_IDS = 'genesys_dash_ids';
+    const KEY_TMA_TOTAL = 'genesys_dash_tma_total'; // Nova chave para o tempo de TMA
+
+    // Se estiver na tela de login, zera tudo automaticamente (garantia de logoff)
+    if (window.location.href.toLowerCase().includes('login')) {
+        localStorage.removeItem(KEY_CONVOS);
+        localStorage.removeItem(KEY_BALAO);
+        localStorage.removeItem(KEY_AVALIACAO);
+        localStorage.removeItem(KEY_IDS);
+        localStorage.removeItem(KEY_TMA_TOTAL);
+    }
+
+    // Puxa a memória salva do navegador (Sobrevive ao F5)
+    let countConvos = parseInt(localStorage.getItem(KEY_CONVOS)) || 0;
+    let countBalao = parseInt(localStorage.getItem(KEY_BALAO)) || 0;
+    let countAvaliacao = parseInt(localStorage.getItem(KEY_AVALIACAO)) || 0;
+    let totalTempoAtendimento = parseInt(localStorage.getItem(KEY_TMA_TOTAL)) || 0; // Puxa o banco de horas
+    let countedIds = new Set(JSON.parse(localStorage.getItem(KEY_IDS) || '[]'));
+    const targetConvos = 49;
+
+    function saveState() {
+        localStorage.setItem(KEY_CONVOS, countConvos);
+        localStorage.setItem(KEY_BALAO, countBalao);
+        localStorage.setItem(KEY_AVALIACAO, countAvaliacao);
+        localStorage.setItem(KEY_TMA_TOTAL, totalTempoAtendimento);
+        localStorage.setItem(KEY_IDS, JSON.stringify(Array.from(countedIds)));
+    }
+
+    // --- 4. LÓGICA DE INTERAÇÃO UI ---
+    const dashboard = document.getElementById('mini-dashboard');
+    const dragHandle = document.getElementById('drag-handle');
+    const btnClose = document.getElementById('btn-close');
+    const btnEdit = document.getElementById('btn-edit');
+    
+    let isExpanded = false; 
+    let isDragging = false; 
+    let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+
+    function updateDashboardUI() {
+        document.getElementById('ui-count').innerText = `${countConvos}/${targetConvos}`;
+        document.getElementById('ui-conversas').innerText = countConvos;
+        document.getElementById('ui-balao').innerText = countBalao; 
+        document.getElementById('ui-avaliacao').innerText = countAvaliacao; 
+        
+        const progress = Math.min(100, (countConvos / targetConvos) * 100);
+        document.getElementById('ui-progress').style.width = `${progress}%`;
+    }
+
+    updateDashboardUI();
+
+    function ensureTopLeft() {
+        if (!dashboard.style.top) {
+            dashboard.style.top = dashboard.offsetTop + "px";
+            dashboard.style.left = dashboard.offsetLeft + "px";
+            dashboard.style.bottom = "auto";
+            dashboard.style.right = "auto";
+        }
+    }
+
+    function expandDashboard() {
+        if (isExpanded) return;
+        ensureTopLeft();
+        const rectBefore = dashboard.getBoundingClientRect();
+        const anchorBottom = rectBefore.bottom > (window.innerHeight / 2);
+        isExpanded = true;
+        dashboard.className = "expanded";
+
+        setTimeout(() => {
+            const rectAfter = dashboard.getBoundingClientRect();
+            let newTop = dashboard.offsetTop;
+            let newLeft = dashboard.offsetLeft;
+            if (anchorBottom) newTop = rectBefore.bottom - rectAfter.height;
+            newTop = Math.max(0, Math.min(newTop, window.innerHeight - rectAfter.height - 10));
+            newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - rectAfter.width - 10));
+            dashboard.style.top = newTop + "px";
+            dashboard.style.left = newLeft + "px";
+        }, 10);
+    }
+
+    function collapseDashboard() {
+        if (!isExpanded) return;
+        ensureTopLeft();
+        const rectBefore = dashboard.getBoundingClientRect();
+        const anchorBottom = rectBefore.bottom > (window.innerHeight / 2);
+        isExpanded = false;
+        dashboard.className = "collapsed";
+
+        setTimeout(() => {
+            const rectAfter = dashboard.getBoundingClientRect();
+            let newTop = dashboard.offsetTop;
+            let newLeft = dashboard.offsetLeft;
+            if (anchorBottom) newTop = rectBefore.bottom - rectAfter.height;
+            newTop = Math.max(0, Math.min(newTop, window.innerHeight - rectAfter.height - 10));
+            newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - rectAfter.width - 10));
+            dashboard.style.top = newTop + "px";
+            dashboard.style.left = newLeft + "px";
+        }, 10);
+    }
+
+    btnEdit.onclick = (e) => {
+        e.stopPropagation();
+        const input = prompt("Atualizar contagem de conversas (Digite 0 para resetar turno e histórico):", countConvos);
+        if (input !== null && !isNaN(input) && input.trim() !== "") {
+            const newVal = Math.max(0, parseInt(input, 10));
+            countConvos = newVal;
+            
+            if (newVal === 0) {
+                countBalao = 0;
+                countAvaliacao = 0;
+                totalTempoAtendimento = 0; // Zera o cálculo do TMA também
+                countedIds.clear();
+                alert("Memória limpa! O painel e o histórico de clientes foram resetados.");
+            }
+            
+            saveState();
+            updateDashboardUI();
+        }
+    };
+    
+    btnClose.onclick = (e) => { 
+        e.stopPropagation();
+        collapseDashboard();
+    };
+
+    dragHandle.onmousedown = (e) => {
+        if (e.target.closest('.compact-btn')) return; 
+        e.preventDefault();
+        ensureTopLeft();
+        
+        isDragging = false; 
+        pos3 = e.clientX; pos4 = e.clientY;
+        
+        document.onmouseup = () => { document.onmouseup = null; document.onmousemove = null; };
+        
+        document.onmousemove = (e) => {
+            isDragging = true;
+            e.preventDefault();
+            pos1 = pos3 - e.clientX; pos2 = pos4 - e.clientY; pos3 = e.clientX; pos4 = e.clientY;
+            
+            let newTop = dashboard.offsetTop - pos2;
+            let newLeft = dashboard.offsetLeft - pos1;
+            
+            newTop = Math.max(0, Math.min(newTop, window.innerHeight - dashboard.offsetHeight - 10));
+            newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - dashboard.offsetWidth - 10));
+            
+            dashboard.style.top = newTop + "px";
+            dashboard.style.left = newLeft + "px";
+        };
+    };
+
+    dashboard.addEventListener('click', (e) => {
+        if (!isExpanded && !isDragging) expandDashboard();
+    });
+
+    const resizeObserver = new ResizeObserver(() => {
+        const rect = dashboard.getBoundingClientRect();
+        if (rect.bottom > window.innerHeight) dashboard.style.top = Math.max(0, window.innerHeight - rect.height - 10) + "px";
+        if (rect.right > window.innerWidth) dashboard.style.left = Math.max(0, window.innerWidth - rect.width - 10) + "px";
+    });
+    resizeObserver.observe(dashboard);
+
+
+    // --- 5. ESCUTADORES DO GENESYS E LOGOFF ---
+    
+    let observerTimeout = null;
+    const domObserver = new MutationObserver(() => {
+        clearTimeout(observerTimeout);
+        observerTimeout = setTimeout(() => {
+            const completedTimers = document.querySelectorAll('.timer-completed');
+            let atualizou = false;
+
+            completedTimers.forEach(timer => {
+                const group = timer.closest('.interaction-group');
+                if (group) {
+                    const uniqueId = group.id || group.getAttribute('data-interaction-id') || group.textContent.substring(0, 30).trim();
+
+                    if (!group.dataset.dashCounted && !countedIds.has(uniqueId)) {
+                        group.dataset.dashCounted = 'true'; 
+                        countedIds.add(uniqueId); 
+                        countConvos++;
+                        atualizou = true;
+                    } 
+                    else if (!group.dataset.dashCounted && countedIds.has(uniqueId)) {
+                        group.dataset.dashCounted = 'true'; 
+                    }
+                }
+            });
+
+            if (atualizou) {
+                saveState();
+                updateDashboardUI();
+            }
+        }, 150);
+    });
+    
+    domObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+
+    // Escutador global de cliques
+    document.addEventListener('click', (e) => {
+        
+        // 1. Escuta o clique no Balão
+        const btnBalao = e.target.closest('button[aria-label="Mensagens de término"], button[aria-label*="término" i], button[aria-label*="Término" i], button[data-qa-id="interaction-control-disconnect"]');
+        if (btnBalao) {
+            countBalao++;
+            saveState();
+            updateDashboardUI();
+        }
+
+        // 2. Escuta o clique no botão DESCONECTAR (Avaliação)
+        let isDesconectar = false;
+        const parentBtn = e.target.closest('button, div[role="button"], a');
+        
+        if (parentBtn && parentBtn.textContent.toUpperCase().includes('DESCONECTAR')) {
+            isDesconectar = true;
+        } else if (e.target.textContent && e.target.textContent.toUpperCase().includes('DESCONECTAR')) {
+            isDesconectar = true;
+        }
+
+        if (isDesconectar) {
+            countAvaliacao++;
+            saveState();
+            updateDashboardUI();
+        }
+
+        // 3. DETETIVE DE LOGOFF
+        const btnSair = e.target.closest('button[aria-label*="Sair" i], button[aria-label*="Log off" i], button[aria-label*="Logout" i], button[aria-label*="Fazer logoff" i], a[href*="logout"]');
+        if (btnSair) {
+            localStorage.removeItem(KEY_CONVOS);
+            localStorage.removeItem(KEY_BALAO);
+            localStorage.removeItem(KEY_AVALIACAO);
+            localStorage.removeItem(KEY_IDS);
+            localStorage.removeItem(KEY_TMA_TOTAL);
+            
+            countConvos = 0;
+            countBalao = 0;
+            countAvaliacao = 0;
+            totalTempoAtendimento = 0;
+            countedIds.clear();
+            updateDashboardUI();
+        }
+    }, true); 
+
+    // --- 6. CÁLCULO REAL DE TMA (MÉDIA DE ATENDIMENTO) ---
+    setInterval(() => {
+        // Conta quantas interações ativas o Genesys tem abertas na tela agora
+        const activeChats = document.querySelectorAll('.interaction-group').length;
+        
+        // Se tiver clientes na tela, ele adiciona os "segundos trabalhados" no banco de horas
+        if (activeChats > 0) {
+            totalTempoAtendimento += activeChats;
+            saveState();
+        }
+
+        // Faz o cálculo real do TMA: (Tempo total de todos os clientes) / (Número de clientes válidos contabilizados)
+        let tmaSegundos = 0;
+        if (countConvos > 0) {
+            tmaSegundos = Math.floor(totalTempoAtendimento / countConvos);
+        }
+
+        // Formata a visualização para MM:SS ou HH:MM:SS
+        const h = Math.floor(tmaSegundos / 3600);
+        const m = String(Math.floor((tmaSegundos % 3600) / 60)).padStart(2, '0');
+        const s = String(tmaSegundos % 60).padStart(2, '0');
+        
+        const tempoVisual = h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
+        document.getElementById('ui-tma').innerText = tempoVisual;
+
+    }, 1000);
+
+})();
