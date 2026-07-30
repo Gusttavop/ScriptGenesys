@@ -942,57 +942,319 @@
 // ==UserScript==
 // @name         Mini Dashboard Flutuante (Apenas Dashboard)
 // @namespace    http://tampermonkey.net/
-// @version      2.9
-// @description  Dashboard com TMA, fechamento inteligente e Radar de Hibernação
+// @version      8.4
+// @description  Dashboard com contadores de término por Desconectar e Balão
 // @match        *://*/* 
+// @include      *
+// @allFrames    true
 // @grant        none
 // ==/UserScript==
 
 (function() {
     'use strict';
 
+    function getIdFromUrl() {
+        const url = `${window.location.href} ${window.location.hash} ${window.location.search}`;
+        const match = url.match(/(?:interactionId|interaction-id|conversationId|conversation-id)=([^&#\s]+)/i);
+        return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    function getIdFromPath(path) {
+        const idAttributes = ['data-interaction-id', 'data-conversation-id', 'data-contact-id'];
+
+        for (const el of path) {
+            if (!el || !el.getAttribute) continue;
+
+            for (const attribute of idAttributes) {
+                const id = el.getAttribute(attribute);
+                if (id) return id;
+            }
+
+            const group = el.closest ? el.closest('.interaction-group') : null;
+            if (group) {
+                for (const attribute of idAttributes) {
+                    const id = group.getAttribute(attribute);
+                    if (id) return id;
+                }
+                if (group.id) return group.id;
+            }
+        }
+
+        return getIdFromUrl();
+    }
+
+    function isDisabledControl(el) {
+        return Boolean(
+            el &&
+            (el.disabled ||
+             el.getAttribute('disabled') !== null ||
+             el.getAttribute('aria-disabled') === 'true' ||
+             (el.classList && el.classList.contains('disabled')))
+        );
+    }
+
+    function isDisconnectControl(el) {
+        if (!el || el.nodeType !== 1) return false;
+
+        const text = (el.innerText || el.textContent || '').toUpperCase().trim();
+        const aria = (el.getAttribute('aria-label') || '').toUpperCase();
+        const title = (el.getAttribute('title') || '').toUpperCase();
+        const dataQa = (el.getAttribute('data-qa-id') || '').toUpperCase();
+        const name = (el.getAttribute('name') || '').toUpperCase();
+        const id = (el.id || '').toUpperCase();
+        const semanticText = `${text} ${aria} ${title} ${dataQa} ${name} ${id}`;
+        const className = typeof el.className === 'string' ? el.className : '';
+        const isButton =
+            el.matches('button, [role="button"], input[type="button"], input[type="submit"]') ||
+            className.includes('btn-main');
+
+        if (!isButton) return false;
+
+        if (/DESCONECTAR|DISCONNECT|ENCERRAR INTERA[CÇ][AÃ]O|END INTERACTION/.test(semanticText)) {
+            return true;
+        }
+
+        const inlineBackground = el.style ? el.style.backgroundColor : '';
+        const computedBackground = window.getComputedStyle ? window.getComputedStyle(el).backgroundColor : '';
+        const background = `${inlineBackground} ${computedBackground}`.replace(/\s/g, '').toLowerCase();
+        const isDisconnectOrange =
+            background.includes('rgb(255,80,34)') ||
+            background.includes('rgba(255,80,34,1)') ||
+            background.includes('#ff5022');
+
+        return isDisconnectOrange;
+    }
+
+    function findDisconnectControl(path) {
+        for (const el of path) {
+            if (isDisconnectControl(el)) return el;
+        }
+        return null;
+    }
+
+    function isBalloonControl(el) {
+        if (!el || el.nodeType !== 1 || !el.matches('button, [role="button"], .btn-main')) return false;
+
+        const aria = (el.getAttribute('aria-label') || '').toUpperCase();
+        const title = (el.getAttribute('title') || '').toUpperCase();
+        const dataQa = (el.getAttribute('data-qa-id') || '').toUpperCase();
+        const text = (el.innerText || el.textContent || '').toUpperCase().trim();
+        const identity = `${aria} ${title} ${dataQa} ${text}`;
+
+        const isWrapUp =
+            identity.includes('TÉRMINO') ||
+            identity.includes('TERMINO') ||
+            identity.includes('WRAP-UP') ||
+            identity.includes('WRAPUP');
+        const isSave =
+            dataQa.includes('SAVE') ||
+            text === 'CONCLUÍDO' ||
+            text === 'CONCLUIDO' ||
+            text === 'DONE' ||
+            text === 'SALVAR';
+
+        return isWrapUp && !isSave;
+    }
+
+    function findBalloonControl(path) {
+        for (const el of path) {
+            if (isBalloonControl(el)) return el;
+        }
+        return null;
+    }
+
+    function isConcludedControl(el) {
+        if (!el || el.nodeType !== 1 || !el.matches('button, [role="button"], .btn-main')) return false;
+
+        const aria = (el.getAttribute('aria-label') || '').toUpperCase();
+        const dataQa = (el.getAttribute('data-qa-id') || '').toUpperCase();
+        const text = (el.innerText || el.textContent || '').toUpperCase().trim();
+
+        return (
+            text === 'CONCLUÍDO' ||
+            text === 'CONCLUIDO' ||
+            text === 'DONE' ||
+            text === 'SALVAR' ||
+            dataQa.includes('WRAPUP-SAVE') ||
+            aria.includes('CONCLUIR')
+        );
+    }
+
+    function findConcludedControl(path) {
+        for (const el of path) {
+            if (isConcludedControl(el)) return el;
+        }
+        return null;
+    }
+
     // =========================================================================
-    // 1. MODO "ESPIÃO" (Roda APENAS dentro dos Iframes, como a tela de Scripts)
+    // 1. MODO "ESPIÃO" (Roda dentro dos Iframes)
     // =========================================================================
     const isTopWindow = (window.top === window.self);
+    const boundDisconnectControls = new WeakSet();
+    const boundBalloonControls = new WeakSet();
+    const boundConcludedControls = new WeakSet();
+    const observedDisconnectRoots = new WeakSet();
+    const watchedFrames = new WeakSet();
+
+    function announceDirectDisconnect(event) {
+        const path = event.composedPath ? event.composedPath() : [event.currentTarget, event.target];
+        const control = findDisconnectControl(path) || event.currentTarget;
+        if (!control || isDisabledControl(control)) return;
+
+        const payload = {
+            action: 'genesys_desconectar_clicado',
+            interactionId: getIdFromPath(path),
+            source: 'direct-button'
+        };
+
+        if (isTopWindow) window.postMessage(payload, '*');
+        else window.top.postMessage(payload, '*');
+    }
+
+    function announceDirectBalloon(event) {
+        const path = event.composedPath ? event.composedPath() : [event.currentTarget, event.target];
+        const control = findBalloonControl(path) || event.currentTarget;
+        if (!control || isDisabledControl(control)) return;
+
+        const payload = {
+            action: 'genesys_balao_clicado',
+            interactionId: getIdFromPath(path),
+            source: 'direct-button'
+        };
+
+        if (isTopWindow) window.postMessage(payload, '*');
+        else window.top.postMessage(payload, '*');
+    }
+
+    function announceDirectConcluded(event) {
+        const path = event.composedPath ? event.composedPath() : [event.currentTarget, event.target];
+        const control = findConcludedControl(path) || event.currentTarget;
+        if (!control || isDisabledControl(control)) return;
+
+        const payload = {
+            action: 'genesys_concluido_clicado',
+            interactionId: getIdFromPath(path),
+            source: 'direct-button'
+        };
+
+        if (isTopWindow) window.postMessage(payload, '*');
+        else window.top.postMessage(payload, '*');
+    }
+
+    function bindDisconnectControl(control) {
+        if (!control || boundDisconnectControls.has(control) || !isDisconnectControl(control)) return;
+
+        boundDisconnectControls.add(control);
+        // pointerdown ocorre antes de o sistema remover o atendimento da tela.
+        control.addEventListener('pointerdown', announceDirectDisconnect, true);
+        // Mantém compatibilidade com clique por teclado e navegadores sem Pointer Events.
+        control.addEventListener('click', announceDirectDisconnect, true);
+    }
+
+    function bindBalloonControl(control) {
+        if (!control || boundBalloonControls.has(control) || !isBalloonControl(control)) return;
+
+        boundBalloonControls.add(control);
+        control.addEventListener('pointerdown', announceDirectBalloon, true);
+        control.addEventListener('click', announceDirectBalloon, true);
+    }
+
+    function bindConcludedControl(control) {
+        if (!control || boundConcludedControls.has(control) || !isConcludedControl(control)) return;
+
+        boundConcludedControls.add(control);
+        control.addEventListener('pointerdown', announceDirectConcluded, true);
+        control.addEventListener('click', announceDirectConcluded, true);
+    }
+
+    function bindTrackedControls(control) {
+        bindDisconnectControl(control);
+        bindBalloonControl(control);
+        bindConcludedControl(control);
+    }
+
+    function inspectAccessibleFrame(iframe) {
+        if (!iframe) return;
+
+        if (!watchedFrames.has(iframe)) {
+            watchedFrames.add(iframe);
+            iframe.addEventListener('load', () => inspectAccessibleFrame(iframe), true);
+        }
+
+        try {
+            if (iframe.contentDocument) observeDisconnectRoot(iframe.contentDocument);
+        } catch (_) {
+            // Frames de outro domínio são tratados pela cópia do userscript dentro deles.
+        }
+    }
+
+    function scanDisconnectTree(root) {
+        if (!root || !root.querySelectorAll) return;
+
+        if (root.nodeType === 1) bindTrackedControls(root);
+        root.querySelectorAll('button, [role="button"], .btn-main').forEach(bindTrackedControls);
+
+        root.querySelectorAll('iframe').forEach(inspectAccessibleFrame);
+
+        // Também procura o botão em componentes que usam Shadow DOM aberto.
+        root.querySelectorAll('*').forEach(el => {
+            if (el.shadowRoot) observeDisconnectRoot(el.shadowRoot);
+        });
+    }
+
+    function observeDisconnectRoot(root) {
+        if (!root || observedDisconnectRoots.has(root)) return;
+        observedDisconnectRoots.add(root);
+        scanDisconnectTree(root);
+
+        const observer = new MutationObserver(mutations => {
+            mutations.forEach(mutation => {
+                if (mutation.type === 'childList') {
+                    mutation.addedNodes.forEach(node => {
+                        if (node.nodeType === 1) scanDisconnectTree(node);
+                    });
+                    if (mutation.target && mutation.target.nodeType === 1) {
+                        bindTrackedControls(mutation.target);
+                    }
+                } else if (mutation.type === 'characterData') {
+                    const parent = mutation.target && mutation.target.parentElement;
+                    if (parent) bindTrackedControls(parent);
+                } else if (mutation.target && mutation.target.nodeType === 1) {
+                    bindTrackedControls(mutation.target);
+                }
+            });
+        });
+
+        observer.observe(root, {
+            childList: true,
+            subtree: true,
+            characterData: true,
+            attributes: true,
+            attributeFilter: ['class', 'style', 'aria-label', 'title', 'data-qa-id']
+        });
+    }
+
+    observeDisconnectRoot(document);
+    // Varredura de segurança caso o sistema recrie internamente algum frame/componente.
+    setInterval(() => scanDisconnectTree(document), 3000);
 
     if (!isTopWindow) {
         document.addEventListener('click', (e) => {
             const path = e.composedPath ? e.composedPath() : [e.target];
-            let encontrou = false;
+            const control = findDisconnectControl(path);
+            if (!control || isDisabledControl(control)) return;
 
-            for (let i = 0; i < path.length; i++) {
-                let el = path[i];
-                if (!el || el.nodeType !== 1 || i > 10) continue; 
-
-                let texto = [
-                    el.innerText,
-                    el.textContent,
-                    el.value,
-                    el.getAttribute('aria-label'),
-                    el.getAttribute('title')
-                ].filter(Boolean).join(' ').toUpperCase().trim();
-
-                if (texto.length > 0 && texto.length < 100) {
-                    if (texto.includes('DESCONECTAR') || 
-                        texto.includes('DISCONNECT') || 
-                        texto.includes('ENCERRAR') || 
-                        texto.includes('TERMINAR')) {
-                        encontrou = true;
-                        break;
-                    }
-                }
-            }
-
-            if (encontrou) {
-                window.top.postMessage({ action: 'genesys_desconectar_clicado' }, '*');
-            }
+            window.top.postMessage({
+                action: 'genesys_desconectar_clicado',
+                interactionId: getIdFromPath(path)
+            }, '*');
         }, true);
         return; 
     }
 
     // =========================================================================
-    // 2. MODO "CHEFE" (Tela Principal - A partir daqui)
+    // 2. MODO "CHEFE" (Tela Principal e Dashboard)
     // =========================================================================
 
     // --- INJETA O CSS ---
@@ -1007,7 +1269,8 @@
             --border-color: #404040; 
             --shadow-color: rgba(0,0,0,0.6); 
             --progress-track: #333333;
-            --progress-fill: #61dafb; 
+            --progress-fill: #61dafb;
+            --mono-accent: #e5e5e5;
         }
         
         #mini-dashboard { 
@@ -1023,7 +1286,7 @@
             border-radius: 8px;
         }
         
-        #mini-dashboard.expanded { width: 285px; cursor: default; }
+        #mini-dashboard.expanded { width: 300px; cursor: default; }
         
         #mini-dashboard.collapsed { 
             width: max-content; 
@@ -1058,13 +1321,63 @@
         .compact-btn { background: var(--bg-primary); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 4px; cursor: pointer; height: 24px; width: 24px; display: flex; align-items: center; justify-content: center; padding: 0; transition: all 0.2s; }
         .compact-btn:hover { color: var(--text-primary); background-color: var(--bg-hover); border-color: #555; }
         
-        .dashboard-content { padding: 10px 12px; display: none; }
+        .dashboard-content { padding: 12px; display: none; }
         #mini-dashboard.expanded .dashboard-content { display: block; }
         
         .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-        .stat-item { background-color: var(--bg-secondary); padding: 8px 6px; border-radius: 6px; text-align: center; }
-        .stat-item span { display: block; color: var(--text-secondary); font-size: 0.75em; margin-bottom: 4px; letter-spacing: 0.3px; }
-        .stat-item strong { font-size: 1em; font-weight: 700; color: var(--text-primary); display: flex; justify-content: center; align-items: center; gap: 4px; }
+        .stat-item {
+            position: relative;
+            overflow: hidden;
+            min-height: 64px;
+            padding: 9px 7px 8px;
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 8px;
+            background: linear-gradient(145deg, #2d2d2d, #252525);
+            text-align: center;
+        }
+        .stat-item::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: var(--mono-accent);
+        }
+        .stat-item span {
+            display: block;
+            margin-bottom: 5px;
+            color: var(--text-secondary);
+            font-size: 0.69em;
+            font-weight: 600;
+            letter-spacing: 0.35px;
+        }
+        .stat-item strong {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            color: var(--text-primary);
+            font-size: 1.12em;
+            font-weight: 750;
+        }
+        .termination-card { min-height: 53px; }
+        .section-divider {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0 2px 7px;
+            color: var(--text-secondary);
+            font-size: 0.63em;
+            font-weight: 700;
+            letter-spacing: 1px;
+        }
+        .section-divider::after {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: var(--border-color);
+        }
     `;
     document.head.appendChild(style);
 
@@ -1085,11 +1398,16 @@
                 </div>
             </div>
             <div class="dashboard-content">
+                <div class="section-divider">TÉRMINOS</div>
                 <div class="stats-grid">
-                    <div class="stat-item"><span>Conversas (Únicas)</span><strong id="ui-conversas">0</strong></div>
-                    <div class="stat-item"><span>TMA</span><strong id="ui-tma">00:00</strong></div>
-                    <div class="stat-item"><span>Avaliação (Término)</span><strong id="ui-avaliacao">0</strong></div>
-                    <div class="stat-item"><span>Balão (Término)</span><strong id="ui-balao">0</strong></div>
+                    <div class="stat-item termination-card">
+                        <span>Desconectar</span>
+                        <strong id="ui-avaliacao">0</strong>
+                    </div>
+                    <div class="stat-item termination-card">
+                        <span>Balão</span>
+                        <strong id="ui-balao">0</strong>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1101,99 +1419,76 @@
     const KEY_BALAO = 'genesys_dash_balao';
     const KEY_AVALIACAO = 'genesys_dash_avaliacao'; 
     const KEY_IDS = 'genesys_dash_ids';
-    const KEY_TMA_TOTAL = 'genesys_dash_tma_total';
-    const KEY_TMA_COUNT = 'genesys_dash_tma_count';
     const KEY_CHAT_TIMES = 'genesys_dash_chat_times';
+    const KEY_PATHS = 'genesys_dash_paths';
+    const KEY_FINALIZED_IDS = 'genesys_dash_finalized_ids_v2';
+    const KEY_DISCONNECT_FIX_VERSION = 'genesys_dash_disconnect_fix_version';
+    const KEY_BALLOON_FIX_VERSION = 'genesys_dash_balloon_fix_version';
+    const DISCONNECT_FIX_VERSION = '2';
+    const BALLOON_FIX_VERSION = '1';
 
-    let lastKnownTimes = {}; // Radar de tempos ao vivo (não precisa ir pro localstorage)
-
-    function limparMemoriaTotal() {
-        localStorage.removeItem(KEY_CONVOS); localStorage.removeItem(KEY_BALAO);
-        localStorage.removeItem(KEY_AVALIACAO); localStorage.removeItem(KEY_IDS);
-        localStorage.removeItem(KEY_TMA_TOTAL); localStorage.removeItem(KEY_TMA_COUNT);
-        localStorage.removeItem(KEY_CHAT_TIMES);
-        
-        countConvos = 0; countBalao = 0; countAvaliacao = 0;
-        totalTempoAtendimento = 0; countTmaFechados = 0; chatStartTimes = {};
-        countedIds.clear();
-        lastKnownTimes = {};
+    // Recupera uma única vez o atendimento que não foi registrado no teste anterior.
+    if (localStorage.getItem(KEY_DISCONNECT_FIX_VERSION) !== DISCONNECT_FIX_VERSION) {
+        const versaoAnterior = localStorage.getItem(KEY_DISCONNECT_FIX_VERSION);
+        const avaliacaoAtual = parseInt(localStorage.getItem(KEY_AVALIACAO), 10) || 0;
+        const avaliacaoCorrigida = versaoAnterior === '1'
+            ? avaliacaoAtual + 1
+            : Math.max(1, avaliacaoAtual);
+        localStorage.setItem(KEY_AVALIACAO, String(avaliacaoCorrigida));
+        localStorage.setItem(KEY_DISCONNECT_FIX_VERSION, DISCONNECT_FIX_VERSION);
     }
 
-    if (window.location.href.toLowerCase().includes('login')) limparMemoriaTotal();
+    // Recupera o encerramento pelo Balão informado como não contabilizado.
+    if (localStorage.getItem(KEY_BALLOON_FIX_VERSION) !== BALLOON_FIX_VERSION) {
+        const balaoAtual = parseInt(localStorage.getItem(KEY_BALAO), 10) || 0;
+        localStorage.setItem(KEY_BALAO, String(balaoAtual + 1));
+        localStorage.setItem(KEY_BALLOON_FIX_VERSION, BALLOON_FIX_VERSION);
+    }
 
     let countConvos = parseInt(localStorage.getItem(KEY_CONVOS)) || 0;
     let countBalao = parseInt(localStorage.getItem(KEY_BALAO)) || 0;
     let countAvaliacao = parseInt(localStorage.getItem(KEY_AVALIACAO)) || 0;
-    let totalTempoAtendimento = parseInt(localStorage.getItem(KEY_TMA_TOTAL)) || 0; 
-    let countTmaFechados = parseInt(localStorage.getItem(KEY_TMA_COUNT)) || 0; 
     let chatStartTimes = JSON.parse(localStorage.getItem(KEY_CHAT_TIMES) || '{}'); 
+    let interactionPaths = JSON.parse(localStorage.getItem(KEY_PATHS) || '{}');
+    let finalizedIds = new Set(JSON.parse(localStorage.getItem(KEY_FINALIZED_IDS) || '[]'));
     let countedIds = new Set(JSON.parse(localStorage.getItem(KEY_IDS) || '[]'));
     const targetConvos = 49;
 
-    function saveState() {
-        localStorage.setItem(KEY_CONVOS, countConvos); localStorage.setItem(KEY_BALAO, countBalao);
-        localStorage.setItem(KEY_AVALIACAO, countAvaliacao); localStorage.setItem(KEY_TMA_TOTAL, totalTempoAtendimento);
-        localStorage.setItem(KEY_TMA_COUNT, countTmaFechados); localStorage.setItem(KEY_CHAT_TIMES, JSON.stringify(chatStartTimes));
-        localStorage.setItem(KEY_IDS, JSON.stringify(Array.from(countedIds)));
+    function limparMemoriaTotal() {
+        localStorage.removeItem(KEY_CONVOS); localStorage.removeItem(KEY_BALAO);
+        localStorage.removeItem(KEY_AVALIACAO); localStorage.removeItem(KEY_IDS);
+        localStorage.removeItem(KEY_CHAT_TIMES); localStorage.removeItem(KEY_PATHS);
+        localStorage.removeItem(KEY_FINALIZED_IDS);
+
+        countConvos = 0; countBalao = 0; countAvaliacao = 0;
+        chatStartTimes = {};
+        countedIds.clear(); interactionPaths = {}; finalizedIds.clear();
     }
 
-    // --- ATUALIZAR UI E TMA NA TELA ---
+    function saveState() {
+        localStorage.setItem(KEY_CONVOS, countConvos); localStorage.setItem(KEY_BALAO, countBalao);
+        localStorage.setItem(KEY_AVALIACAO, countAvaliacao);
+        localStorage.setItem(KEY_CHAT_TIMES, JSON.stringify(chatStartTimes));
+        localStorage.setItem(KEY_IDS, JSON.stringify(Array.from(countedIds)));
+        localStorage.setItem(KEY_PATHS, JSON.stringify(interactionPaths));
+        localStorage.setItem(KEY_FINALIZED_IDS, JSON.stringify(Array.from(finalizedIds)));
+    }
+
+    if (window.location.href.toLowerCase().includes('login')) limparMemoriaTotal();
+
+    // --- ATUALIZAR UI ---
     function updateDashboardUI() {
         document.getElementById('ui-count').innerText = `${countConvos}/${targetConvos}`;
-        document.getElementById('ui-conversas').innerText = countConvos;
         document.getElementById('ui-balao').innerText = countBalao; 
-        document.getElementById('ui-avaliacao').innerText = cou// ==UserScript==
-// @name         Mini Dashboard Flutuante (Apenas Dashboard)
-// @namespace    http://tampermonkey.net/
-// @version      2.3
-// @description  Dashboard com cálculo REAL de TMA, memória F5 e Avaliação.
-// @match        *://*/* 
-// @grant        none
-// ==/UserScript==
-
-(function() {
-    'use strict';
-
-    // 1. INJETA O CSS 
-    const style = document.createElement('style');
-    style.innerHTML = `
-        :root { 
-            --bg-primary: #1c1c1c; 
-            --bg-secondary: #2a2a2a; 
-            --bg-hover: #3a3a3a;
-            --text-primary: #ffffff; 
-            --text-secondary: #999999; 
-            --border-color: #404040; 
-            --shadow-color: rgba(0,0,0,0.6); 
-            --progress-track: #333333;
-            --progress-fill: #61dafb; 
-        }
-        
-        #mini-dashboard { 
-            position: fixed; 
-            bottom: 20px; 
-            left: 20px; 
-            background: var(--bg-primary); color: var(--text-primary); 
-            border: 1px solid var(--border-color); 
-ntAvaliacao; 
+        document.getElementById('ui-avaliacao').innerText = countAvaliacao;
         
         const progress = Math.min(100, (countConvos / targetConvos) * 100);
         document.getElementById('ui-progress').style.width = `${progress}%`;
-
-        let tmaVisual = "00:00";
-        if (countTmaFechados > 0) {
-            let mediaSec = Math.floor(totalTempoAtendimento / countTmaFechados);
-            const h = Math.floor(mediaSec / 3600);
-            const m = String(Math.floor((mediaSec % 3600) / 60)).padStart(2, '0');
-            const s = String(mediaSec % 60).padStart(2, '0');
-            tmaVisual = h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
-        }
-        document.getElementById('ui-tma').innerText = tmaVisual;
     }
 
     updateDashboardUI();
 
-    // --- EVENTOS DO DASHBOARD (Arrastar, Minimizar, Editar) ---
+    // --- EVENTOS DO DASHBOARD ---
     const dashboard = document.getElementById('mini-dashboard');
     const dragHandle = document.getElementById('drag-handle');
     const btnClose = document.getElementById('btn-close');
@@ -1253,95 +1548,272 @@ ntAvaliacao;
         };
     };
 
-    // --- FUNÇÃO PARA LER O CRONÔMETRO OFICIAL DA TELA (Genesys Sync) ---
-    function getGenesysTimer(group) {
+    // --- IDENTIFICAÇÃO E TEMPO REAL DOS ATENDIMENTOS ---
+    let generatedInteractionId = 0;
+    let lastActiveInteractionId = null;
+    let lastDisconnectHandledAt = 0;
+    let lastBalloonHandledAt = 0;
+    let lastConcludedHandledAt = 0;
+    let pendingBalloon = null;
+    const pendingRemovalTimers = new Map();
+
+    function getInteractionId(group) {
         if (!group) return null;
-        
-        const timerEls = group.querySelectorAll('[class*="timer" i], [class*="duration" i], [class*="time" i]');
-        for (let el of timerEls) {
-            const match = el.innerText.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-            if (match) {
-                let h = match[3] ? parseInt(match[1], 10) : 0;
-                let m = match[3] ? parseInt(match[2], 10) : parseInt(match[1], 10);
-                let s = match[3] ? parseInt(match[3], 10) : parseInt(match[2], 10);
-                return (h * 3600) + (m * 60) + s;
-            }
+
+        const dataId =
+            group.getAttribute('data-interaction-id') ||
+            group.getAttribute('data-conversation-id') ||
+            group.getAttribute('data-contact-id');
+        if (dataId) return dataId;
+        if (group.id) return group.id;
+        if (group.dataset.dashboardInteractionId) return group.dataset.dashboardInteractionId;
+
+        const selected = group.matches(
+            '.is-selected, [aria-selected="true"], .selected, .active'
+        );
+        const urlId = selected ? getIdFromUrl() : null;
+        if (urlId) return urlId;
+
+        generatedInteractionId++;
+        group.dataset.dashboardInteractionId = `dashboard-${Date.now()}-${generatedInteractionId}`;
+        return group.dataset.dashboardInteractionId;
+    }
+
+    function getActiveInteractionId(path = []) {
+        const pathId = getIdFromPath(path);
+        if (pathId && (chatStartTimes[pathId] || path.length > 0)) return pathId;
+
+        const activeGroup = document.querySelector(
+            '.interaction-group.is-selected, ' +
+            '.interaction-group[aria-selected="true"], ' +
+            '.interaction-group.selected, ' +
+            '.interaction-group.active'
+        );
+        if (activeGroup) return getInteractionId(activeGroup);
+
+        if (pathId) return pathId;
+        if (lastActiveInteractionId && chatStartTimes[lastActiveInteractionId]) {
+            return lastActiveInteractionId;
         }
 
-        const allTextNodes = document.createTreeWalker(group, NodeFilter.SHOW_TEXT, null, false);
-        let node;
-        let possibleTimes = [];
-        while ((node = allTextNodes.nextNode())) {
-            const match = node.nodeValue.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-            if (match) {
-                let h = match[3] ? parseInt(match[1], 10) : 0;
-                let m = match[3] ? parseInt(match[2], 10) : parseInt(match[1], 10);
-                let s = match[3] ? parseInt(match[3], 10) : parseInt(match[2], 10);
-                possibleTimes.push((h * 3600) + (m * 60) + s);
-            }
-        }
-        
-        if (possibleTimes.length > 0) return Math.max(...possibleTimes);
+        const pendingIds = Object.keys(interactionPaths).filter(id =>
+            chatStartTimes[id] && interactionPaths[id] !== 'ATIVO'
+        );
+        if (pendingIds.length === 1) return pendingIds[0];
+
+        const knownIds = Object.keys(chatStartTimes).filter(id => !finalizedIds.has(id));
+        if (knownIds.length === 1) return knownIds[0];
+
         return null;
     }
 
-    // --- RADAR DE TEMPO: Atualiza os cronômetros invisivelmente a cada 1 segundo ---
-    setInterval(() => {
+    function getInteractionIdFromFrameSource(sourceWindow) {
+        if (!sourceWindow) return null;
+
+        for (const iframe of document.querySelectorAll('iframe')) {
+            try {
+                if (iframe.contentWindow !== sourceWindow) continue;
+                const group = iframe.closest('.interaction-group');
+                return group ? getInteractionId(group) : null;
+            } catch (_) {
+                // Ignora frames que o navegador não permite inspecionar.
+            }
+        }
+
+        return null;
+    }
+
+    function ensureInteractionTracked(uniqueId) {
+        if (!uniqueId || finalizedIds.has(uniqueId)) return false;
+
+        let changed = false;
+        if (!Number.isFinite(Number(chatStartTimes[uniqueId]))) {
+            chatStartTimes[uniqueId] = Date.now();
+            changed = true;
+        }
+        if (!interactionPaths[uniqueId]) {
+            interactionPaths[uniqueId] = 'ATIVO';
+            changed = true;
+        }
+        return changed;
+    }
+
+    function clearInteractionTracking(uniqueId) {
+        delete chatStartTimes[uniqueId];
+        delete interactionPaths[uniqueId];
+
+        const removalTimer = pendingRemovalTimers.get(uniqueId);
+        if (removalTimer) clearTimeout(removalTimer);
+        pendingRemovalTimers.delete(uniqueId);
+
+        if (lastActiveInteractionId === uniqueId) lastActiveInteractionId = null;
+    }
+
+    function finalizeInteraction(uniqueId, flow) {
+        if (!uniqueId || finalizedIds.has(uniqueId)) return false;
+
+        ensureInteractionTracked(uniqueId);
+        const finalFlow = flow || interactionPaths[uniqueId] || 'ATIVO';
+
+        if (finalFlow === 'BALAO') countBalao++;
+        else if (finalFlow === 'DESCONECTAR') countAvaliacao++;
+
+        if (finalFlow === 'BALAO') pendingBalloon = null;
+
+        finalizedIds.add(uniqueId);
+        while (finalizedIds.size > 1000) {
+            finalizedIds.delete(finalizedIds.values().next().value);
+        }
+
+        clearInteractionTracking(uniqueId);
+        saveState();
+        updateDashboardUI();
+        return true;
+    }
+
+    function registerDisconnect(activeId) {
+        const now = Date.now();
+
+        // Evita duplicidade caso o mesmo clique seja percebido no iframe e no topo.
+        if (now - lastDisconnectHandledAt < 1200) return false;
+        lastDisconnectHandledAt = now;
+
+        if (activeId) {
+            lastActiveInteractionId = activeId;
+            return finalizeInteraction(activeId, 'DESCONECTAR');
+        }
+
+        // O botão da imagem fica fora do bloco que contém o ID do cliente.
+        // Mesmo sem esse ID, o clique precisa subir no contador.
+        countAvaliacao++;
+        saveState();
+        updateDashboardUI();
+        return true;
+    }
+
+    function registerBalloon(activeId) {
+        const now = Date.now();
+        if (now - lastBalloonHandledAt < 1200) return false;
+        lastBalloonHandledAt = now;
+
+        pendingBalloon = {
+            interactionId: activeId || null,
+            createdAt: now
+        };
+
+        if (activeId) {
+            lastActiveInteractionId = activeId;
+            ensureInteractionTracked(activeId);
+            interactionPaths[activeId] = 'BALAO';
+            saveState();
+        }
+
+        return true;
+    }
+
+    function completeCurrentFlow(activeId) {
+        const now = Date.now();
+        if (now - lastConcludedHandledAt < 1200) return false;
+        lastConcludedHandledAt = now;
+
+        const pendingIsValid =
+            pendingBalloon &&
+            now - pendingBalloon.createdAt <= 30 * 60 * 1000;
+        if (!pendingIsValid) pendingBalloon = null;
+
+        const finalId =
+            activeId ||
+            (pendingBalloon ? pendingBalloon.interactionId : null);
+
+        if (finalId) {
+            const trackedFlow = interactionPaths[finalId];
+            const finalFlow =
+                trackedFlow && trackedFlow !== 'ATIVO'
+                    ? trackedFlow
+                    : (pendingBalloon ? 'BALAO' : 'ATIVO');
+
+            if (finalFlow === 'BALAO') pendingBalloon = null;
+            return finalizeInteraction(finalId, finalFlow);
+        }
+
+        if (!pendingBalloon) return false;
+
+        countBalao++;
+        pendingBalloon = null;
+        saveState();
+        updateDashboardUI();
+        return true;
+    }
+
+    function interactionIsPresent(uniqueId) {
+        return Array.from(document.querySelectorAll('.interaction-group'))
+            .some(group => getInteractionId(group) === uniqueId);
+    }
+
+    function scheduleRemovalFinalization(uniqueId) {
+        if (!uniqueId || finalizedIds.has(uniqueId) || pendingRemovalTimers.has(uniqueId)) return;
+
+        const timer = setTimeout(() => {
+            pendingRemovalTimers.delete(uniqueId);
+            if (interactionIsPresent(uniqueId) || finalizedIds.has(uniqueId)) return;
+
+            // Finaliza o atendimento quando ele some sem passar pelo botão "Concluído".
+            finalizeInteraction(uniqueId, interactionPaths[uniqueId] || 'ATIVO');
+        }, 750);
+
+        pendingRemovalTimers.set(uniqueId, timer);
+    }
+
+    function scanInteractions() {
+        let changed = false;
+
         document.querySelectorAll('.interaction-group').forEach(group => {
-            const uniqueId = group.id || group.getAttribute('data-interaction-id') || group.textContent.substring(0, 30).trim();
-            const timer = getGenesysTimer(group);
-            if (timer !== null) {
-                lastKnownTimes[uniqueId] = timer;
+            const uniqueId = getInteractionId(group);
+            if (!uniqueId) return;
+
+            const removalTimer = pendingRemovalTimers.get(uniqueId);
+            if (removalTimer) {
+                clearTimeout(removalTimer);
+                pendingRemovalTimers.delete(uniqueId);
+            }
+
+            if (ensureInteractionTracked(uniqueId)) changed = true;
+            if (group.matches('.is-selected, [aria-selected="true"], .selected, .active')) {
+                lastActiveInteractionId = uniqueId;
             }
         });
-    }, 1000);
 
-    // --- OBSERVERS (CRIAÇÃO E DESTRUIÇÃO DE CHATS) ---
+        return changed;
+    }
+
+    // --- OBSERVERS: CRIAÇÃO E DESTRUIÇÃO ---
     const domObserver = new MutationObserver((mutations) => {
         let atualizou = false;
 
+        // Aguarda um pouco antes de considerar encerrado, evitando contar uma mera
+        // movimentação/recriação do elemento como finalização.
         mutations.forEach(mutation => {
-            
-            // DETECTOR DE HIBERNAÇÃO (Se o chat for removido da tela sem clique)
             if (mutation.removedNodes && mutation.removedNodes.length > 0) {
                 mutation.removedNodes.forEach(node => {
-                    if (node.nodeType === 1) { // Só elementos HTML
+                    if (node.nodeType === 1) { 
                         let groups = [];
                         if (node.classList && node.classList.contains('interaction-group')) groups.push(node);
-                        if (node.querySelectorAll) {
-                            node.querySelectorAll('.interaction-group').forEach(g => groups.push(g));
-                        }
+                        if (node.querySelectorAll) node.querySelectorAll('.interaction-group').forEach(g => groups.push(g));
                         
                         groups.forEach(group => {
-                            const uniqueId = group.id || group.getAttribute('data-interaction-id') || group.textContent.substring(0, 30).trim();
-                            
-                            // Se ele sumiu e a trava "chatStartTimes" ainda existe, significa que sumiu SOZINHO (Hibernação)
-                            if (chatStartTimes[uniqueId]) {
-                                if (countedIds.has(uniqueId)) {
-                                    // Pega a última leitura do radar, ou usa fallback matemático
-                                    let durationSec = lastKnownTimes[uniqueId] || Math.floor((Date.now() - chatStartTimes[uniqueId]) / 1000);
-                                    
-                                    if (durationSec > 0) {
-                                        totalTempoAtendimento += durationSec;
-                                        countTmaFechados++;
-                                    }
-                                }
-                                // Quebra as travas
-                                delete chatStartTimes[uniqueId];
-                                delete lastKnownTimes[uniqueId];
-                                atualizou = true;
-                            }
+                            const uniqueId = getInteractionId(group);
+                            if (chatStartTimes[uniqueId]) scheduleRemovalFinalization(uniqueId);
                         });
                     }
                 });
             }
         });
 
-        // DETECTOR DE NOVOS CHATS E VALIDAÇÃO (1 MINUTO)
+        // DETECTOR DE NOVAS CONVERSAS E VALIDAÇÃO DE 1 MINUTO
         document.querySelectorAll('.timer-completed').forEach(timer => {
             const group = timer.closest('.interaction-group');
             if (group) {
-                const uniqueId = group.id || group.getAttribute('data-interaction-id') || group.textContent.substring(0, 30).trim();
+                const uniqueId = getInteractionId(group);
                 if (!group.dataset.dashCounted && !countedIds.has(uniqueId)) {
                     group.dataset.dashCounted = 'true'; countedIds.add(uniqueId); countConvos++; atualizou = true;
                 } else if (!group.dataset.dashCounted && countedIds.has(uniqueId)) {
@@ -1350,100 +1822,117 @@ ntAvaliacao;
             }
         });
 
-        document.querySelectorAll('.interaction-group').forEach(group => {
-            const uniqueId = group.id || group.getAttribute('data-interaction-id') || group.textContent.substring(0, 30).trim();
-            // Trava/Cadeado inicial
-            if (!chatStartTimes[uniqueId]) {
-                chatStartTimes[uniqueId] = Date.now();
-                atualizou = true;
-            }
-        });
+        if (scanInteractions()) atualizou = true;
 
         if (atualizou) { saveState(); updateDashboardUI(); }
     });
     
     domObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    if (scanInteractions()) saveState();
 
-    // --- FUNÇÃO CENTRAL QUE PROCESSA O FECHAMENTO MANUAL ---
-    function registrarFechamento(tipo) {
-        if (tipo === 'AVALIACAO') countAvaliacao++;
-        if (tipo === 'BALAO') countBalao++;
-
-        const activeGroup = document.querySelector('.interaction-group.is-selected') || document.querySelector('.interaction-group');
-        if (activeGroup) {
-            const uniqueId = activeGroup.id || activeGroup.getAttribute('data-interaction-id') || activeGroup.textContent.substring(0, 30).trim();
-            
-            if (chatStartTimes[uniqueId]) {
-                if (countedIds.has(uniqueId)) {
-                    let durationSec = getGenesysTimer(activeGroup);
-                    
-                    if (durationSec === null) {
-                        durationSec = Math.floor((Date.now() - chatStartTimes[uniqueId]) / 1000);
-                    }
-
-                    if (durationSec > 0) {
-                        totalTempoAtendimento += durationSec;
-                        countTmaFechados++;
-                    }
-                }
-                
-                delete chatStartTimes[uniqueId]; 
-                delete lastKnownTimes[uniqueId];
-            }
-        }
-        
-        saveState();
-        updateDashboardUI(); 
-    }
-
-    // --- OUVIDO DE RÁDIO: ESCUTA O SINAL DO ESPIÃO (IFRAME) ---
+    // --- RECEBE O AVISO DO ESPIÃO DO IFRAME ---
     window.addEventListener('message', (event) => {
-        if (event.data && event.data.action === 'genesys_desconectar_clicado') {
-            registrarFechamento('AVALIACAO');
+        if (!event.data) return;
+        const supportedActions = [
+            'genesys_desconectar_clicado',
+            'genesys_balao_clicado',
+            'genesys_concluido_clicado'
+        ];
+        if (!supportedActions.includes(event.data.action)) return;
+
+        const informedId = typeof event.data.interactionId === 'string' ? event.data.interactionId : null;
+        const frameId = getInteractionIdFromFrameSource(event.source);
+        const activeId =
+            (informedId && chatStartTimes[informedId] ? informedId : null) ||
+            frameId ||
+            getActiveInteractionId([]) ||
+            informedId;
+
+        if (event.data.action === 'genesys_desconectar_clicado') {
+            registerDisconnect(activeId);
+        } else if (event.data.action === 'genesys_balao_clicado') {
+            registerBalloon(activeId);
+        } else if (event.data.action === 'genesys_concluido_clicado') {
+            completeCurrentFlow(activeId);
         }
     });
 
-    // --- ESCUTADOR LOCAL ---
+    // --- ESCUTADOR MESTRE DE CLIQUES (A MÁGICA ACONTECE AQUI) ---
     document.addEventListener('click', (e) => {
         const path = e.composedPath ? e.composedPath() : [e.target];
+        const activeId = getActiveInteractionId(path);
+        const disconnectControl = findDisconnectControl(path);
+        const balloonControl = findBalloonControl(path);
+        const concludedControl = findConcludedControl(path);
 
-        let clicouBalao = false;
-        let clicouDesconectar = false;
-        let clicouSair = false;
+        let clickedTransfer = false;
+        let clickedBalao = Boolean(balloonControl && !isDisabledControl(balloonControl));
+        let clickedDesconectarMain = Boolean(disconnectControl && !isDisabledControl(disconnectControl));
+        let clickedConcluido = Boolean(concludedControl);
+        let isConcluidoDisabled = Boolean(concludedControl && isDisabledControl(concludedControl));
+        let clickedSair = false;
 
         for (let i = 0; i < path.length; i++) {
             let el = path[i];
-            if (!el || el.nodeType !== 1 || i > 10) continue;
+            if (!el || el.nodeType !== 1) continue;
 
-            const aria = el.getAttribute('aria-label') || '';
-            const dataQa = el.getAttribute('data-qa-id') || '';
-            const href = el.getAttribute('href') || '';
-            
-            let texto = [
-                el.innerText,
-                el.textContent,
-                el.value,
-                aria,
-                el.getAttribute('title')
-            ].filter(Boolean).join(' ').toUpperCase().trim();
+            const aria = (el.getAttribute('aria-label') || '').toUpperCase();
+            const title = (el.getAttribute('title') || '').toUpperCase();
+            const dataQa = (el.getAttribute('data-qa-id') || '').toUpperCase();
+            const text = (el.innerText || el.textContent || '').toUpperCase().trim();
+            const href = (el.getAttribute('href') || '').toUpperCase();
 
-            if (aria.match(/término|wrap-up/i) || dataQa.match(/wrapup/i)) clicouBalao = true;
-            if (aria.match(/Sair|Log off|Logout|Fazer logoff/i) || href.match(/logout/i)) clicouSair = true;
+            // 1. TRANSFERÊNCIA (Duas setas)
+            if (aria.includes('TRANSFER') || title.includes('TRANSFER') || dataQa.includes('TRANSFER')) {
+                clickedTransfer = true;
+            }
 
-            if (texto.length > 0 && texto.length < 100) {
-                if (texto.includes('DESCONECTAR') || 
-                    texto.includes('DISCONNECT') || 
-                    texto.includes('ENCERRAR') || 
-                    texto.includes('TERMINAR')) {
-                    clicouDesconectar = true;
+            // 2. BALÃO
+            if (aria.includes('TÉRMINO') || aria.includes('WRAP-UP') || aria.includes('WRAPUP') || dataQa.includes('WRAPUP') || title.includes('TÉRMINO')) {
+                if (!dataQa.includes('SAVE') && !text.includes('CONCLUÍDO')) {
+                    clickedBalao = true;
                 }
+            }
+
+            // 3. CONCLUÍDO (Botão Azul Tabulação)
+            if (text === 'CONCLUÍDO' || text === 'DONE' || dataQa.includes('WRAPUP-SAVE') || aria.includes('CONCLUIR') || text === 'SALVAR') {
+                clickedConcluido = true;
+                if (isDisabledControl(el)) {
+                    isConcluidoDisabled = true;
+                }
+            }
+            
+            // 4. SAIR
+            if (aria.match(/SAIR|LOG OFF|LOGOUT|FAZER LOGOFF/i) || href.match(/LOGOUT/i)) {
+                clickedSair = true;
             }
         }
 
-        if (clicouBalao) registrarFechamento('BALAO');
-        if (clicouDesconectar) registrarFechamento('AVALIACAO');
-        
-        if (clicouSair) {
+        // --- REGISTRA A TRILHA DO ATENDIMENTO ---
+        if (activeId) {
+            lastActiveInteractionId = activeId;
+            ensureInteractionTracked(activeId);
+            
+            if (clickedTransfer) {
+                interactionPaths[activeId] = 'TRANSFER';
+                saveState();
+            }
+        }
+
+        if (clickedBalao) {
+            registerBalloon(activeId);
+        }
+
+        if (clickedDesconectarMain) {
+            registerDisconnect(activeId);
+        }
+
+        // --- FINALIZA O FLUXO DO BALÃO/DA TABULAÇÃO ---
+        if (clickedConcluido && !isConcluidoDisabled) {
+            completeCurrentFlow(activeId);
+        }
+
+        if (clickedSair) {
             limparMemoriaTotal();
             updateDashboardUI();
         }
