@@ -938,1005 +938,1013 @@
 
 
 
+    
+(function() {'use strict';
 
-// ==UserScript==
-// @name         Mini Dashboard Flutuante (Apenas Dashboard)
-// @namespace    http://tampermonkey.net/
-// @version      8.4
-// @description  Dashboard com contadores de término por Desconectar e Balão
-// @match        *://*/* 
-// @include      *
-// @allFrames    true
-// @grant        none
-// ==/UserScript==
+function getIdFromUrl() {
+    const url = `${window.location.href} ${window.location.hash} ${window.location.search}`;
+    const match = url.match(/(?:interactionId|interaction-id|conversationId|conversation-id)=([^&#\s]+)/i);
+    return match ? decodeURIComponent(match[1]) : null;
+}
 
-(function() {
-    'use strict';
+function getIdFromPath(path) {
+    const idAttributes = ['data-interaction-id', 'data-conversation-id', 'data-contact-id'];
 
-    function getIdFromUrl() {
-        const url = `${window.location.href} ${window.location.hash} ${window.location.search}`;
-        const match = url.match(/(?:interactionId|interaction-id|conversationId|conversation-id)=([^&#\s]+)/i);
-        return match ? decodeURIComponent(match[1]) : null;
-    }
+    for (const el of path) {
+        if (!el || !el.getAttribute) continue;
 
-    function getIdFromPath(path) {
-        const idAttributes = ['data-interaction-id', 'data-conversation-id', 'data-contact-id'];
+        for (const attribute of idAttributes) {
+            const id = el.getAttribute(attribute);
+            if (id) return id;
+        }
 
-        for (const el of path) {
-            if (!el || !el.getAttribute) continue;
-
+        const group = el.closest ? el.closest('.interaction-group') : null;
+        if (group) {
             for (const attribute of idAttributes) {
-                const id = el.getAttribute(attribute);
+                const id = group.getAttribute(attribute);
                 if (id) return id;
             }
-
-            const group = el.closest ? el.closest('.interaction-group') : null;
-            if (group) {
-                for (const attribute of idAttributes) {
-                    const id = group.getAttribute(attribute);
-                    if (id) return id;
-                }
-                if (group.id) return group.id;
-            }
-        }
-
-        return getIdFromUrl();
-    }
-
-    function isDisabledControl(el) {
-        return Boolean(
-            el &&
-            (el.disabled ||
-             el.getAttribute('disabled') !== null ||
-             el.getAttribute('aria-disabled') === 'true' ||
-             (el.classList && el.classList.contains('disabled')))
-        );
-    }
-
-    function isDisconnectControl(el) {
-        if (!el || el.nodeType !== 1) return false;
-
-        const text = (el.innerText || el.textContent || '').toUpperCase().trim();
-        const aria = (el.getAttribute('aria-label') || '').toUpperCase();
-        const title = (el.getAttribute('title') || '').toUpperCase();
-        const dataQa = (el.getAttribute('data-qa-id') || '').toUpperCase();
-        const name = (el.getAttribute('name') || '').toUpperCase();
-        const id = (el.id || '').toUpperCase();
-        const semanticText = `${text} ${aria} ${title} ${dataQa} ${name} ${id}`;
-        const className = typeof el.className === 'string' ? el.className : '';
-        const isButton =
-            el.matches('button, [role="button"], input[type="button"], input[type="submit"]') ||
-            className.includes('btn-main');
-
-        if (!isButton) return false;
-
-        if (/DESCONECTAR|DISCONNECT|ENCERRAR INTERA[CÇ][AÃ]O|END INTERACTION/.test(semanticText)) {
-            return true;
-        }
-
-        const inlineBackground = el.style ? el.style.backgroundColor : '';
-        const computedBackground = window.getComputedStyle ? window.getComputedStyle(el).backgroundColor : '';
-        const background = `${inlineBackground} ${computedBackground}`.replace(/\s/g, '').toLowerCase();
-        const isDisconnectOrange =
-            background.includes('rgb(255,80,34)') ||
-            background.includes('rgba(255,80,34,1)') ||
-            background.includes('#ff5022');
-
-        return isDisconnectOrange;
-    }
-
-    function findDisconnectControl(path) {
-        for (const el of path) {
-            if (isDisconnectControl(el)) return el;
-        }
-        return null;
-    }
-
-    function isBalloonControl(el) {
-        if (!el || el.nodeType !== 1 || !el.matches('button, [role="button"], .btn-main')) return false;
-
-        const aria = (el.getAttribute('aria-label') || '').toUpperCase();
-        const title = (el.getAttribute('title') || '').toUpperCase();
-        const dataQa = (el.getAttribute('data-qa-id') || '').toUpperCase();
-        const text = (el.innerText || el.textContent || '').toUpperCase().trim();
-        const identity = `${aria} ${title} ${dataQa} ${text}`;
-
-        const isWrapUp =
-            identity.includes('TÉRMINO') ||
-            identity.includes('TERMINO') ||
-            identity.includes('WRAP-UP') ||
-            identity.includes('WRAPUP');
-        const isSave =
-            dataQa.includes('SAVE') ||
-            text === 'CONCLUÍDO' ||
-            text === 'CONCLUIDO' ||
-            text === 'DONE' ||
-            text === 'SALVAR';
-
-        return isWrapUp && !isSave;
-    }
-
-    function findBalloonControl(path) {
-        for (const el of path) {
-            if (isBalloonControl(el)) return el;
-        }
-        return null;
-    }
-
-    function isConcludedControl(el) {
-        if (!el || el.nodeType !== 1 || !el.matches('button, [role="button"], .btn-main')) return false;
-
-        const aria = (el.getAttribute('aria-label') || '').toUpperCase();
-        const dataQa = (el.getAttribute('data-qa-id') || '').toUpperCase();
-        const text = (el.innerText || el.textContent || '').toUpperCase().trim();
-
-        return (
-            text === 'CONCLUÍDO' ||
-            text === 'CONCLUIDO' ||
-            text === 'DONE' ||
-            text === 'SALVAR' ||
-            dataQa.includes('WRAPUP-SAVE') ||
-            aria.includes('CONCLUIR')
-        );
-    }
-
-    function findConcludedControl(path) {
-        for (const el of path) {
-            if (isConcludedControl(el)) return el;
-        }
-        return null;
-    }
-
-    // =========================================================================
-    // 1. MODO "ESPIÃO" (Roda dentro dos Iframes)
-    // =========================================================================
-    const isTopWindow = (window.top === window.self);
-    const boundDisconnectControls = new WeakSet();
-    const boundBalloonControls = new WeakSet();
-    const boundConcludedControls = new WeakSet();
-    const observedDisconnectRoots = new WeakSet();
-    const watchedFrames = new WeakSet();
-
-    function announceDirectDisconnect(event) {
-        const path = event.composedPath ? event.composedPath() : [event.currentTarget, event.target];
-        const control = findDisconnectControl(path) || event.currentTarget;
-        if (!control || isDisabledControl(control)) return;
-
-        const payload = {
-            action: 'genesys_desconectar_clicado',
-            interactionId: getIdFromPath(path),
-            source: 'direct-button'
-        };
-
-        if (isTopWindow) window.postMessage(payload, '*');
-        else window.top.postMessage(payload, '*');
-    }
-
-    function announceDirectBalloon(event) {
-        const path = event.composedPath ? event.composedPath() : [event.currentTarget, event.target];
-        const control = findBalloonControl(path) || event.currentTarget;
-        if (!control || isDisabledControl(control)) return;
-
-        const payload = {
-            action: 'genesys_balao_clicado',
-            interactionId: getIdFromPath(path),
-            source: 'direct-button'
-        };
-
-        if (isTopWindow) window.postMessage(payload, '*');
-        else window.top.postMessage(payload, '*');
-    }
-
-    function announceDirectConcluded(event) {
-        const path = event.composedPath ? event.composedPath() : [event.currentTarget, event.target];
-        const control = findConcludedControl(path) || event.currentTarget;
-        if (!control || isDisabledControl(control)) return;
-
-        const payload = {
-            action: 'genesys_concluido_clicado',
-            interactionId: getIdFromPath(path),
-            source: 'direct-button'
-        };
-
-        if (isTopWindow) window.postMessage(payload, '*');
-        else window.top.postMessage(payload, '*');
-    }
-
-    function bindDisconnectControl(control) {
-        if (!control || boundDisconnectControls.has(control) || !isDisconnectControl(control)) return;
-
-        boundDisconnectControls.add(control);
-        // pointerdown ocorre antes de o sistema remover o atendimento da tela.
-        control.addEventListener('pointerdown', announceDirectDisconnect, true);
-        // Mantém compatibilidade com clique por teclado e navegadores sem Pointer Events.
-        control.addEventListener('click', announceDirectDisconnect, true);
-    }
-
-    function bindBalloonControl(control) {
-        if (!control || boundBalloonControls.has(control) || !isBalloonControl(control)) return;
-
-        boundBalloonControls.add(control);
-        control.addEventListener('pointerdown', announceDirectBalloon, true);
-        control.addEventListener('click', announceDirectBalloon, true);
-    }
-
-    function bindConcludedControl(control) {
-        if (!control || boundConcludedControls.has(control) || !isConcludedControl(control)) return;
-
-        boundConcludedControls.add(control);
-        control.addEventListener('pointerdown', announceDirectConcluded, true);
-        control.addEventListener('click', announceDirectConcluded, true);
-    }
-
-    function bindTrackedControls(control) {
-        bindDisconnectControl(control);
-        bindBalloonControl(control);
-        bindConcludedControl(control);
-    }
-
-    function inspectAccessibleFrame(iframe) {
-        if (!iframe) return;
-
-        if (!watchedFrames.has(iframe)) {
-            watchedFrames.add(iframe);
-            iframe.addEventListener('load', () => inspectAccessibleFrame(iframe), true);
-        }
-
-        try {
-            if (iframe.contentDocument) observeDisconnectRoot(iframe.contentDocument);
-        } catch (_) {
-            // Frames de outro domínio são tratados pela cópia do userscript dentro deles.
+            if (group.id) return group.id;
         }
     }
 
-    function scanDisconnectTree(root) {
-        if (!root || !root.querySelectorAll) return;
+    return getIdFromUrl();
+}
 
-        if (root.nodeType === 1) bindTrackedControls(root);
-        root.querySelectorAll('button, [role="button"], .btn-main').forEach(bindTrackedControls);
+function isDisabledControl(el) {
+    return Boolean(
+        el &&
+        (el.disabled ||
+         el.getAttribute('disabled') !== null ||
+         el.getAttribute('aria-disabled') === 'true' ||
+         (el.classList && el.classList.contains('disabled')))
+    );
+}
 
-        root.querySelectorAll('iframe').forEach(inspectAccessibleFrame);
+function isDisconnectControl(el) {
+    if (!el || el.nodeType !== 1) return false;
 
-        // Também procura o botão em componentes que usam Shadow DOM aberto.
-        root.querySelectorAll('*').forEach(el => {
-            if (el.shadowRoot) observeDisconnectRoot(el.shadowRoot);
-        });
+    const text = (el.innerText || el.textContent || '').toUpperCase().trim();
+    const aria = (el.getAttribute('aria-label') || '').toUpperCase();
+    const title = (el.getAttribute('title') || '').toUpperCase();
+    const dataQa = (el.getAttribute('data-qa-id') || '').toUpperCase();
+    const name = (el.getAttribute('name') || '').toUpperCase();
+    const id = (el.id || '').toUpperCase();
+    const semanticText = `${text} ${aria} ${title} ${dataQa} ${name} ${id}`;
+    const className = typeof el.className === 'string' ? el.className : '';
+    const isButton =
+        el.matches('button, [role="button"], input[type="button"], input[type="submit"]') ||
+        className.includes('btn-main');
+
+    if (!isButton) return false;
+
+    if (/DESCONECTAR|DISCONNECT|ENCERRAR INTERA[CÇ][AÃ]O|END INTERACTION/.test(semanticText)) {
+        return true;
     }
 
-    function observeDisconnectRoot(root) {
-        if (!root || observedDisconnectRoots.has(root)) return;
-        observedDisconnectRoots.add(root);
-        scanDisconnectTree(root);
+    const inlineBackground = el.style ? el.style.backgroundColor : '';
+    const computedBackground = window.getComputedStyle ? window.getComputedStyle(el).backgroundColor : '';
+    const background = `${inlineBackground} ${computedBackground}`.replace(/\s/g, '').toLowerCase();
+    const isDisconnectOrange =
+        background.includes('rgb(255,80,34)') ||
+        background.includes('rgba(255,80,34,1)') ||
+        background.includes('#ff5022');
 
-        const observer = new MutationObserver(mutations => {
-            mutations.forEach(mutation => {
-                if (mutation.type === 'childList') {
-                    mutation.addedNodes.forEach(node => {
-                        if (node.nodeType === 1) scanDisconnectTree(node);
-                    });
-                    if (mutation.target && mutation.target.nodeType === 1) {
-                        bindTrackedControls(mutation.target);
-                    }
-                } else if (mutation.type === 'characterData') {
-                    const parent = mutation.target && mutation.target.parentElement;
-                    if (parent) bindTrackedControls(parent);
-                } else if (mutation.target && mutation.target.nodeType === 1) {
+    return isDisconnectOrange;
+}
+
+function findDisconnectControl(path) {
+    for (const el of path) {
+        if (isDisconnectControl(el)) return el;
+    }
+    return null;
+}
+
+function isBalloonControl(el) {
+    if (!el || el.nodeType !== 1 || !el.matches('button, [role="button"], .btn-main')) return false;
+
+    const aria = (el.getAttribute('aria-label') || '').toUpperCase();
+    const title = (el.getAttribute('title') || '').toUpperCase();
+    const dataQa = (el.getAttribute('data-qa-id') || '').toUpperCase();
+    const text = (el.innerText || el.textContent || '').toUpperCase().trim();
+    const identity = `${aria} ${title} ${dataQa} ${text}`;
+
+    const isWrapUp =
+        identity.includes('TÉRMINO') ||
+        identity.includes('TERMINO') ||
+        identity.includes('WRAP-UP') ||
+        identity.includes('WRAPUP');
+    const isSave =
+        dataQa.includes('SAVE') ||
+        text === 'CONCLUÍDO' ||
+        text === 'CONCLUIDO' ||
+        text === 'DONE' ||
+        text === 'SALVAR';
+
+    return isWrapUp && !isSave;
+}
+
+function findBalloonControl(path) {
+    for (const el of path) {
+        if (isBalloonControl(el)) return el;
+    }
+    return null;
+}
+
+function isConcludedControl(el) {
+    if (!el || el.nodeType !== 1 || !el.matches('button, [role="button"], .btn-main')) return false;
+
+    const aria = (el.getAttribute('aria-label') || '').toUpperCase();
+    const dataQa = (el.getAttribute('data-qa-id') || '').toUpperCase();
+    const text = (el.innerText || el.textContent || '').toUpperCase().trim();
+
+    return (
+        text === 'CONCLUÍDO' ||
+        text === 'CONCLUIDO' ||
+        text === 'DONE' ||
+        text === 'SALVAR' ||
+        dataQa.includes('WRAPUP-SAVE') ||
+        aria.includes('CONCLUIR')
+    );
+}
+
+function findConcludedControl(path) {
+    for (const el of path) {
+        if (isConcludedControl(el)) return el;
+    }
+    return null;
+}
+
+// =========================================================================
+// 1. MODO "ESPIÃO" (Roda dentro dos Iframes)
+// =========================================================================
+const isTopWindow = (window.top === window.self);
+const boundDisconnectControls = new WeakSet();
+const boundBalloonControls = new WeakSet();
+const boundConcludedControls = new WeakSet();
+const observedDisconnectRoots = new WeakSet();
+const watchedFrames = new WeakSet();
+
+function announceDirectDisconnect(event) {
+    const path = event.composedPath ? event.composedPath() : [event.currentTarget, event.target];
+    const control = findDisconnectControl(path) || event.currentTarget;
+    if (!control || isDisabledControl(control)) return;
+
+    const payload = {
+        action: 'genesys_desconectar_clicado',
+        interactionId: getIdFromPath(path),
+        source: 'direct-button'
+    };
+
+    if (isTopWindow) window.postMessage(payload, '*');
+    else window.top.postMessage(payload, '*');
+}
+
+function announceDirectBalloon(event) {
+    const path = event.composedPath ? event.composedPath() : [event.currentTarget, event.target];
+    const control = findBalloonControl(path) || event.currentTarget;
+    if (!control || isDisabledControl(control)) return;
+
+    const payload = {
+        action: 'genesys_balao_clicado',
+        interactionId: getIdFromPath(path),
+        source: 'direct-button'
+    };
+
+    if (isTopWindow) window.postMessage(payload, '*');
+    else window.top.postMessage(payload, '*');
+}
+
+function announceDirectConcluded(event) {
+    const path = event.composedPath ? event.composedPath() : [event.currentTarget, event.target];
+    const control = findConcludedControl(path) || event.currentTarget;
+    if (!control || isDisabledControl(control)) return;
+
+    const payload = {
+        action: 'genesys_concluido_clicado',
+        interactionId: getIdFromPath(path),
+        source: 'direct-button'
+    };
+
+    if (isTopWindow) window.postMessage(payload, '*');
+    else window.top.postMessage(payload, '*');
+}
+
+function bindDisconnectControl(control) {
+    if (!control || boundDisconnectControls.has(control) || !isDisconnectControl(control)) return;
+
+    boundDisconnectControls.add(control);
+    // pointerdown ocorre antes de o sistema remover o atendimento da tela.
+    control.addEventListener('pointerdown', announceDirectDisconnect, true);
+    // Mantém compatibilidade com clique por teclado e navegadores sem Pointer Events.
+    control.addEventListener('click', announceDirectDisconnect, true);
+}
+
+function bindBalloonControl(control) {
+    if (!control || boundBalloonControls.has(control) || !isBalloonControl(control)) return;
+
+    boundBalloonControls.add(control);
+    control.addEventListener('pointerdown', announceDirectBalloon, true);
+    control.addEventListener('click', announceDirectBalloon, true);
+}
+
+function bindConcludedControl(control) {
+    if (!control || boundConcludedControls.has(control) || !isConcludedControl(control)) return;
+
+    boundConcludedControls.add(control);
+    control.addEventListener('pointerdown', announceDirectConcluded, true);
+    control.addEventListener('click', announceDirectConcluded, true);
+}
+
+function bindTrackedControls(control) {
+    bindDisconnectControl(control);
+    bindBalloonControl(control);
+    bindConcludedControl(control);
+}
+
+function inspectAccessibleFrame(iframe) {
+    if (!iframe) return;
+
+    if (!watchedFrames.has(iframe)) {
+        watchedFrames.add(iframe);
+        iframe.addEventListener('load', () => inspectAccessibleFrame(iframe), true);
+    }
+
+    try {
+        if (iframe.contentDocument) observeDisconnectRoot(iframe.contentDocument);
+    } catch (_) {
+        // Frames de outro domínio são tratados pela cópia do userscript dentro deles.
+    }
+}
+
+function scanDisconnectTree(root) {
+    if (!root || !root.querySelectorAll) return;
+
+    if (root.nodeType === 1) bindTrackedControls(root);
+    root.querySelectorAll('button, [role="button"], .btn-main').forEach(bindTrackedControls);
+
+    root.querySelectorAll('iframe').forEach(inspectAccessibleFrame);
+
+    // Também procura o botão em componentes que usam Shadow DOM aberto.
+    root.querySelectorAll('*').forEach(el => {
+        if (el.shadowRoot) observeDisconnectRoot(el.shadowRoot);
+    });
+}
+
+function observeDisconnectRoot(root) {
+    if (!root || observedDisconnectRoots.has(root)) return;
+    observedDisconnectRoots.add(root);
+    scanDisconnectTree(root);
+
+    const observer = new MutationObserver(mutations => {
+        mutations.forEach(mutation => {
+            if (mutation.type === 'childList') {
+                mutation.addedNodes.forEach(node => {
+                    if (node.nodeType === 1) scanDisconnectTree(node);
+                });
+                if (mutation.target && mutation.target.nodeType === 1) {
                     bindTrackedControls(mutation.target);
                 }
-            });
+            } else if (mutation.type === 'characterData') {
+                const parent = mutation.target && mutation.target.parentElement;
+                if (parent) bindTrackedControls(parent);
+            } else if (mutation.target && mutation.target.nodeType === 1) {
+                bindTrackedControls(mutation.target);
+            }
         });
+    });
 
-        observer.observe(root, {
-            childList: true,
-            subtree: true,
-            characterData: true,
-            attributes: true,
-            attributeFilter: ['class', 'style', 'aria-label', 'title', 'data-qa-id']
-        });
+    observer.observe(root, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ['class', 'style', 'aria-label', 'title', 'data-qa-id']
+    });
+}
+
+observeDisconnectRoot(document);
+// Varredura de segurança caso o sistema recrie internamente algum frame/componente.
+setInterval(() => scanDisconnectTree(document), 3000);
+
+if (!isTopWindow) {
+    document.addEventListener('click', (e) => {
+        const path = e.composedPath ? e.composedPath() : [e.target];
+        const control = findDisconnectControl(path);
+        if (!control || isDisabledControl(control)) return;
+
+        window.top.postMessage({
+            action: 'genesys_desconectar_clicado',
+            interactionId: getIdFromPath(path)
+        }, '*');
+    }, true);
+    return; 
+}
+
+// =========================================================================
+// 2. MODO "CHEFE" (Tela Principal e Dashboard)
+// =========================================================================
+
+// --- INJETA O CSS ---
+const style = document.createElement('style');
+style.innerHTML = `
+    :root { 
+        --bg-primary: #1c1c1c; 
+        --bg-secondary: #2a2a2a; 
+        --bg-hover: #3a3a3a;
+        --text-primary: #ffffff; 
+        --text-secondary: #999999; 
+        --border-color: #404040; 
+        --shadow-color: rgba(0,0,0,0.6); 
+        --progress-track: #333333;
+        --progress-fill: #61dafb;
+        --mono-accent: #e5e5e5;
     }
-
-    observeDisconnectRoot(document);
-    // Varredura de segurança caso o sistema recrie internamente algum frame/componente.
-    setInterval(() => scanDisconnectTree(document), 3000);
-
-    if (!isTopWindow) {
-        document.addEventListener('click', (e) => {
-            const path = e.composedPath ? e.composedPath() : [e.target];
-            const control = findDisconnectControl(path);
-            if (!control || isDisabledControl(control)) return;
-
-            window.top.postMessage({
-                action: 'genesys_desconectar_clicado',
-                interactionId: getIdFromPath(path)
-            }, '*');
-        }, true);
-        return; 
+    
+    #mini-dashboard { 
+        position: fixed; 
+        bottom: 20px; 
+        left: 20px; 
+        background: var(--bg-primary); color: var(--text-primary); 
+        border: 1px solid var(--border-color); 
+        box-shadow: 0 6px 20px var(--shadow-color); 
+        z-index: 999999; display: flex; flex-direction: column; 
+        transition: width 0.2s, border-radius 0.2s, background-color 0.2s; 
+        user-select: none; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; 
+        border-radius: 8px;
     }
+    
+    #mini-dashboard.expanded { width: 300px; cursor: default; }
+    
+    #mini-dashboard.collapsed { 
+        width: max-content; 
+        min-width: 0; 
+        height: 32px; 
+        border-radius: 50px; 
+        overflow: hidden; 
+        background-color: var(--bg-primary); 
+        border: 1px solid var(--border-color); 
+        cursor: pointer;
+    }
+    
+    .dashboard-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; }
+    #mini-dashboard.expanded .dashboard-header { border-bottom: 1px solid var(--border-color); padding: 8px 12px; cursor: move; }
+    #mini-dashboard.collapsed .dashboard-header { padding: 0 14px; height: 100%; justify-content: center; cursor: pointer; }
+    
+    .counter-display { display: flex; align-items: center; flex-grow: 1; }
+    #mini-dashboard.expanded .counter-display { margin-right: 12px; }
+    #mini-dashboard.collapsed .counter-display { margin-right: 0; }
+    
+    .counter-text { font-weight: 700; font-size: 1.05em; white-space: nowrap; letter-spacing: 0.5px; }
+    #mini-dashboard.expanded .counter-text { margin-right: 12px; }
+    #mini-dashboard.collapsed .counter-text { margin-right: 0; font-size: 1em; } 
+    
+    .progress-bar-container { flex-grow: 1; height: 6px; background-color: var(--progress-track); border-radius: 3px; overflow: hidden; display: none; }
+    #mini-dashboard.expanded .progress-bar-container { display: block; }
+    .progress-bar { background-color: var(--progress-fill); height: 100%; width: 0%; transition: width 0.5s ease-out; }
+    
+    .dashboard-controls { display: flex; gap: 4px; }
+    #mini-dashboard.collapsed .dashboard-controls { display: none; }
+    
+    .compact-btn { background: var(--bg-primary); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 4px; cursor: pointer; height: 24px; width: 24px; display: flex; align-items: center; justify-content: center; padding: 0; transition: all 0.2s; }
+    .compact-btn:hover { color: var(--text-primary); background-color: var(--bg-hover); border-color: #555; }
+    
+    .dashboard-content { padding: 12px; display: none; }
+    #mini-dashboard.expanded .dashboard-content { display: block; }
+    
+    .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .stat-item {
+        position: relative;
+        overflow: hidden;
+        min-height: 64px;
+        padding: 9px 7px 8px;
+        border: 1px solid rgba(255,255,255,0.05);
+        border-radius: 8px;
+        background: linear-gradient(145deg, #2d2d2d, #252525);
+        text-align: center;
+    }
+    .stat-item::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 2px;
+        background: var(--mono-accent);
+    }
+    .stat-item span {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--text-secondary);
+        font-size: 0.69em;
+        font-weight: 600;
+        letter-spacing: 0.35px;
+    }
+    .stat-item strong {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        color: var(--text-primary);
+        font-size: 1.12em;
+        font-weight: 750;
+    }
+    .termination-card { min-height: 53px; }
+    .section-divider {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 2px 7px;
+        color: var(--text-secondary);
+        font-size: 0.63em;
+        font-weight: 700;
+        letter-spacing: 1px;
+    }
+    .section-divider::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--border-color);
+    }
+`;
+document.head.appendChild(style);
 
-    // =========================================================================
-    // 2. MODO "CHEFE" (Tela Principal e Dashboard)
-    // =========================================================================
-
-    // --- INJETA O CSS ---
-    const style = document.createElement('style');
-    style.innerHTML = `
-        :root { 
-            --bg-primary: #1c1c1c; 
-            --bg-secondary: #2a2a2a; 
-            --bg-hover: #3a3a3a;
-            --text-primary: #ffffff; 
-            --text-secondary: #999999; 
-            --border-color: #404040; 
-            --shadow-color: rgba(0,0,0,0.6); 
-            --progress-track: #333333;
-            --progress-fill: #61dafb;
-            --mono-accent: #e5e5e5;
-        }
-        
-        #mini-dashboard { 
-            position: fixed; 
-            bottom: 20px; 
-            left: 20px; 
-            background: var(--bg-primary); color: var(--text-primary); 
-            border: 1px solid var(--border-color); 
-            box-shadow: 0 6px 20px var(--shadow-color); 
-            z-index: 999999; display: flex; flex-direction: column; 
-            transition: width 0.2s, border-radius 0.2s, background-color 0.2s; 
-            user-select: none; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; 
-            border-radius: 8px;
-        }
-        
-        #mini-dashboard.expanded { width: 300px; cursor: default; }
-        
-        #mini-dashboard.collapsed { 
-            width: max-content; 
-            min-width: 0; 
-            height: 32px; 
-            border-radius: 50px; 
-            overflow: hidden; 
-            background-color: var(--bg-primary); 
-            border: 1px solid var(--border-color); 
-            cursor: pointer;
-        }
-        
-        .dashboard-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; }
-        #mini-dashboard.expanded .dashboard-header { border-bottom: 1px solid var(--border-color); padding: 8px 12px; cursor: move; }
-        #mini-dashboard.collapsed .dashboard-header { padding: 0 14px; height: 100%; justify-content: center; cursor: pointer; }
-        
-        .counter-display { display: flex; align-items: center; flex-grow: 1; }
-        #mini-dashboard.expanded .counter-display { margin-right: 12px; }
-        #mini-dashboard.collapsed .counter-display { margin-right: 0; }
-        
-        .counter-text { font-weight: 700; font-size: 1.05em; white-space: nowrap; letter-spacing: 0.5px; }
-        #mini-dashboard.expanded .counter-text { margin-right: 12px; }
-        #mini-dashboard.collapsed .counter-text { margin-right: 0; font-size: 1em; } 
-        
-        .progress-bar-container { flex-grow: 1; height: 6px; background-color: var(--progress-track); border-radius: 3px; overflow: hidden; display: none; }
-        #mini-dashboard.expanded .progress-bar-container { display: block; }
-        .progress-bar { background-color: var(--progress-fill); height: 100%; width: 0%; transition: width 0.5s ease-out; }
-        
-        .dashboard-controls { display: flex; gap: 4px; }
-        #mini-dashboard.collapsed .dashboard-controls { display: none; }
-        
-        .compact-btn { background: var(--bg-primary); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 4px; cursor: pointer; height: 24px; width: 24px; display: flex; align-items: center; justify-content: center; padding: 0; transition: all 0.2s; }
-        .compact-btn:hover { color: var(--text-primary); background-color: var(--bg-hover); border-color: #555; }
-        
-        .dashboard-content { padding: 12px; display: none; }
-        #mini-dashboard.expanded .dashboard-content { display: block; }
-        
-        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-        .stat-item {
-            position: relative;
-            overflow: hidden;
-            min-height: 64px;
-            padding: 9px 7px 8px;
-            border: 1px solid rgba(255,255,255,0.05);
-            border-radius: 8px;
-            background: linear-gradient(145deg, #2d2d2d, #252525);
-            text-align: center;
-        }
-        .stat-item::before {
-            content: "";
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 2px;
-            background: var(--mono-accent);
-        }
-        .stat-item span {
-            display: block;
-            margin-bottom: 5px;
-            color: var(--text-secondary);
-            font-size: 0.69em;
-            font-weight: 600;
-            letter-spacing: 0.35px;
-        }
-        .stat-item strong {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 4px;
-            color: var(--text-primary);
-            font-size: 1.12em;
-            font-weight: 750;
-        }
-        .termination-card { min-height: 53px; }
-        .section-divider {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin: 0 2px 7px;
-            color: var(--text-secondary);
-            font-size: 0.63em;
-            font-weight: 700;
-            letter-spacing: 1px;
-        }
-        .section-divider::after {
-            content: "";
-            flex: 1;
-            height: 1px;
-            background: var(--border-color);
-        }
-    `;
-    document.head.appendChild(style);
-
-    // --- INJETA O HTML ---
-    const dashboardContainer = document.createElement('div');
-    dashboardContainer.innerHTML = `
-        <div id="mini-dashboard" class="collapsed">
-            <div class="dashboard-header" id="drag-handle">
-                <div class="counter-display">
-                    <span class="counter-text" id="ui-count">0/49</span>
-                    <div class="progress-bar-container"><div class="progress-bar" id="ui-progress"></div></div>
-                </div>
-                <div class="dashboard-controls">
-                    <button class="compact-btn" id="btn-edit" title="Ajustar Contagem">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 13px; height: 13px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                    </button>
-                    <button class="compact-btn" id="btn-close" title="Minimizar">X</button>
-                </div>
+// --- INJETA O HTML ---
+const dashboardContainer = document.createElement('div');
+dashboardContainer.innerHTML = `
+    <div id="mini-dashboard" class="collapsed">
+        <div class="dashboard-header" id="drag-handle">
+            <div class="counter-display">
+                <span class="counter-text" id="ui-count">0/49</span>
+                <div class="progress-bar-container"><div class="progress-bar" id="ui-progress"></div></div>
             </div>
-            <div class="dashboard-content">
-                <div class="section-divider">TÉRMINOS</div>
-                <div class="stats-grid">
-                    <div class="stat-item termination-card">
-                        <span>Desconectar</span>
-                        <strong id="ui-avaliacao">0</strong>
-                    </div>
-                    <div class="stat-item termination-card">
-                        <span>Balão</span>
-                        <strong id="ui-balao">0</strong>
-                    </div>
+            <div class="dashboard-controls">
+                <button class="compact-btn" id="btn-edit" title="Ajustar Contagem">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 13px; height: 13px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                </button>
+                <button class="compact-btn" id="btn-close" title="Minimizar">X</button>
+            </div>
+        </div>
+        <div class="dashboard-content">
+            <div class="section-divider">TÉRMINOS</div>
+            <div class="stats-grid">
+                <div class="stat-item termination-card">
+                    <span>Desconectar</span>
+                    <strong id="ui-avaliacao">0</strong>
+                </div>
+                <div class="stat-item termination-card">
+                    <span>Balão</span>
+                    <strong id="ui-balao">0</strong>
                 </div>
             </div>
         </div>
-    `;
-    document.body.appendChild(dashboardContainer);
+    </div>
+`;
+document.body.appendChild(dashboardContainer);
 
-    // --- SISTEMA DE MEMÓRIA ---
-    const KEY_CONVOS = 'genesys_dash_convos';
-    const KEY_BALAO = 'genesys_dash_balao';
-    const KEY_AVALIACAO = 'genesys_dash_avaliacao'; 
-    const KEY_IDS = 'genesys_dash_ids';
-    const KEY_CHAT_TIMES = 'genesys_dash_chat_times';
-    const KEY_PATHS = 'genesys_dash_paths';
-    const KEY_FINALIZED_IDS = 'genesys_dash_finalized_ids_v2';
-    const KEY_DISCONNECT_FIX_VERSION = 'genesys_dash_disconnect_fix_version';
-    const KEY_BALLOON_FIX_VERSION = 'genesys_dash_balloon_fix_version';
-    const DISCONNECT_FIX_VERSION = '2';
-    const BALLOON_FIX_VERSION = '1';
+// --- SISTEMA DE MEMÓRIA ---
+const KEY_CONVOS = 'genesys_dash_convos';
+const KEY_BALAO = 'genesys_dash_balao';
+const KEY_AVALIACAO = 'genesys_dash_avaliacao'; 
+const KEY_IDS = 'genesys_dash_ids';
+const KEY_CHAT_TIMES = 'genesys_dash_chat_times';
+const KEY_PATHS = 'genesys_dash_paths';
+const KEY_FINALIZED_IDS = 'genesys_dash_finalized_ids_v2';
+const KEY_DISCONNECT_FIX_VERSION = 'genesys_dash_disconnect_fix_version';
+const KEY_BALLOON_FIX_VERSION = 'genesys_dash_balloon_fix_version';
+const KEY_RESET_DIA = 'genesys_dash_ultimo_reset';
 
-    // Recupera uma única vez o atendimento que não foi registrado no teste anterior.
-    if (localStorage.getItem(KEY_DISCONNECT_FIX_VERSION) !== DISCONNECT_FIX_VERSION) {
-        const versaoAnterior = localStorage.getItem(KEY_DISCONNECT_FIX_VERSION);
-        const avaliacaoAtual = parseInt(localStorage.getItem(KEY_AVALIACAO), 10) || 0;
-        const avaliacaoCorrigida = versaoAnterior === '1'
-            ? avaliacaoAtual + 1
-            : Math.max(1, avaliacaoAtual);
-        localStorage.setItem(KEY_AVALIACAO, String(avaliacaoCorrigida));
-        localStorage.setItem(KEY_DISCONNECT_FIX_VERSION, DISCONNECT_FIX_VERSION);
-    }
+function verificarResetDiario() {
+    const hoje = new Date().toLocaleDateString('pt-BR');
+    const ultimoReset = localStorage.getItem(KEY_RESET_DIA);
 
-    // Recupera o encerramento pelo Balão informado como não contabilizado.
-    if (localStorage.getItem(KEY_BALLOON_FIX_VERSION) !== BALLOON_FIX_VERSION) {
-        const balaoAtual = parseInt(localStorage.getItem(KEY_BALAO), 10) || 0;
-        localStorage.setItem(KEY_BALAO, String(balaoAtual + 1));
-        localStorage.setItem(KEY_BALLOON_FIX_VERSION, BALLOON_FIX_VERSION);
-    }
-
-    let countConvos = parseInt(localStorage.getItem(KEY_CONVOS)) || 0;
-    let countBalao = parseInt(localStorage.getItem(KEY_BALAO)) || 0;
-    let countAvaliacao = parseInt(localStorage.getItem(KEY_AVALIACAO)) || 0;
-    let chatStartTimes = JSON.parse(localStorage.getItem(KEY_CHAT_TIMES) || '{}'); 
-    let interactionPaths = JSON.parse(localStorage.getItem(KEY_PATHS) || '{}');
-    let finalizedIds = new Set(JSON.parse(localStorage.getItem(KEY_FINALIZED_IDS) || '[]'));
-    let countedIds = new Set(JSON.parse(localStorage.getItem(KEY_IDS) || '[]'));
-    const targetConvos = 49;
-
-    function limparMemoriaTotal() {
-        localStorage.removeItem(KEY_CONVOS); localStorage.removeItem(KEY_BALAO);
-        localStorage.removeItem(KEY_AVALIACAO); localStorage.removeItem(KEY_IDS);
-        localStorage.removeItem(KEY_CHAT_TIMES); localStorage.removeItem(KEY_PATHS);
+    if (ultimoReset !== hoje) {
+        localStorage.removeItem(KEY_CONVOS);
+        localStorage.removeItem(KEY_BALAO);
+        localStorage.removeItem(KEY_AVALIACAO);
+        localStorage.removeItem(KEY_IDS);
+        localStorage.removeItem(KEY_CHAT_TIMES);
+        localStorage.removeItem(KEY_PATHS);
         localStorage.removeItem(KEY_FINALIZED_IDS);
 
-        countConvos = 0; countBalao = 0; countAvaliacao = 0;
-        chatStartTimes = {};
-        countedIds.clear(); interactionPaths = {}; finalizedIds.clear();
+        localStorage.setItem(KEY_RESET_DIA, hoje);
     }
+}
 
-    function saveState() {
-        localStorage.setItem(KEY_CONVOS, countConvos); localStorage.setItem(KEY_BALAO, countBalao);
-        localStorage.setItem(KEY_AVALIACAO, countAvaliacao);
-        localStorage.setItem(KEY_CHAT_TIMES, JSON.stringify(chatStartTimes));
-        localStorage.setItem(KEY_IDS, JSON.stringify(Array.from(countedIds)));
-        localStorage.setItem(KEY_PATHS, JSON.stringify(interactionPaths));
-        localStorage.setItem(KEY_FINALIZED_IDS, JSON.stringify(Array.from(finalizedIds)));
-    }
+verificarResetDiario();
+const DISCONNECT_FIX_VERSION = '2';
+const BALLOON_FIX_VERSION = '1';
 
-    if (window.location.href.toLowerCase().includes('login')) limparMemoriaTotal();
+// Recupera uma única vez o atendimento que não foi registrado no teste anterior.
+if (localStorage.getItem(KEY_DISCONNECT_FIX_VERSION) !== DISCONNECT_FIX_VERSION) {
+    const versaoAnterior = localStorage.getItem(KEY_DISCONNECT_FIX_VERSION);
+    const avaliacaoAtual = parseInt(localStorage.getItem(KEY_AVALIACAO), 10) || 0;
+    const avaliacaoCorrigida = versaoAnterior === '1'
+        ? avaliacaoAtual + 1
+        : Math.max(1, avaliacaoAtual);
+    localStorage.setItem(KEY_AVALIACAO, String(avaliacaoCorrigida));
+    localStorage.setItem(KEY_DISCONNECT_FIX_VERSION, DISCONNECT_FIX_VERSION);
+}
 
-    // --- ATUALIZAR UI ---
-    function updateDashboardUI() {
-        document.getElementById('ui-count').innerText = `${countConvos}/${targetConvos}`;
-        document.getElementById('ui-balao').innerText = countBalao; 
-        document.getElementById('ui-avaliacao').innerText = countAvaliacao;
-        
-        const progress = Math.min(100, (countConvos / targetConvos) * 100);
-        document.getElementById('ui-progress').style.width = `${progress}%`;
-    }
+// Recupera o encerramento pelo Balão informado como não contabilizado.
+if (localStorage.getItem(KEY_BALLOON_FIX_VERSION) !== BALLOON_FIX_VERSION) {
+    const balaoAtual = parseInt(localStorage.getItem(KEY_BALAO), 10) || 0;
+    localStorage.setItem(KEY_BALAO, String(balaoAtual + 1));
+    localStorage.setItem(KEY_BALLOON_FIX_VERSION, BALLOON_FIX_VERSION);
+}
 
-    updateDashboardUI();
+let countConvos = parseInt(localStorage.getItem(KEY_CONVOS)) || 0;
+let countBalao = parseInt(localStorage.getItem(KEY_BALAO)) || 0;
+let countAvaliacao = parseInt(localStorage.getItem(KEY_AVALIACAO)) || 0;
+let chatStartTimes = JSON.parse(localStorage.getItem(KEY_CHAT_TIMES) || '{}'); 
+let interactionPaths = JSON.parse(localStorage.getItem(KEY_PATHS) || '{}');
+let finalizedIds = new Set(JSON.parse(localStorage.getItem(KEY_FINALIZED_IDS) || '[]'));
+let countedIds = new Set(JSON.parse(localStorage.getItem(KEY_IDS) || '[]'));
+const targetConvos = 49;
 
-    // --- EVENTOS DO DASHBOARD ---
-    const dashboard = document.getElementById('mini-dashboard');
-    const dragHandle = document.getElementById('drag-handle');
-    const btnClose = document.getElementById('btn-close');
-    const btnEdit = document.getElementById('btn-edit');
-    let isExpanded = false, isDragging = false, pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+function limparMemoriaTotal() {
+    localStorage.removeItem(KEY_CONVOS); localStorage.removeItem(KEY_BALAO);
+    localStorage.removeItem(KEY_AVALIACAO); localStorage.removeItem(KEY_IDS);
+    localStorage.removeItem(KEY_CHAT_TIMES); localStorage.removeItem(KEY_PATHS);
+    localStorage.removeItem(KEY_FINALIZED_IDS);
 
-    function ensureTopLeft() {
-        if (!dashboard.style.top) {
-            dashboard.style.top = dashboard.offsetTop + "px"; dashboard.style.left = dashboard.offsetLeft + "px";
-            dashboard.style.bottom = "auto"; dashboard.style.right = "auto";
-        }
-    }
+    countConvos = 0; countBalao = 0; countAvaliacao = 0;
+    chatStartTimes = {};
+    countedIds.clear(); interactionPaths = {}; finalizedIds.clear();
+}
 
-    function toggleDashboard(expand) {
-        if (isExpanded === expand) return;
-        ensureTopLeft();
-        const rectBefore = dashboard.getBoundingClientRect();
-        const anchorBottom = rectBefore.bottom > (window.innerHeight / 2);
-        isExpanded = expand;
-        dashboard.className = expand ? "expanded" : "collapsed";
+function saveState() {
+    localStorage.setItem(KEY_CONVOS, countConvos); localStorage.setItem(KEY_BALAO, countBalao);
+    localStorage.setItem(KEY_AVALIACAO, countAvaliacao);
+    localStorage.setItem(KEY_CHAT_TIMES, JSON.stringify(chatStartTimes));
+    localStorage.setItem(KEY_IDS, JSON.stringify(Array.from(countedIds)));
+    localStorage.setItem(KEY_PATHS, JSON.stringify(interactionPaths));
+    localStorage.setItem(KEY_FINALIZED_IDS, JSON.stringify(Array.from(finalizedIds)));
+}
 
-        setTimeout(() => {
-            const rectAfter = dashboard.getBoundingClientRect();
-            let newTop = dashboard.offsetTop; let newLeft = dashboard.offsetLeft;
-            if (anchorBottom) newTop = rectBefore.bottom - rectAfter.height;
-            newTop = Math.max(0, Math.min(newTop, window.innerHeight - rectAfter.height - 10));
-            newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - rectAfter.width - 10));
-            dashboard.style.top = newTop + "px"; dashboard.style.left = newLeft + "px";
-        }, 10);
-    }
+if (window.location.href.toLowerCase().includes('login')) limparMemoriaTotal();
 
-    btnEdit.onclick = (e) => {
-        e.stopPropagation();
-        const input = prompt("Atualizar contagem de conversas (Digite 0 para resetar tudo):", countConvos);
-        if (input !== null && !isNaN(input) && input.trim() !== "") {
-            const newVal = Math.max(0, parseInt(input, 10));
-            if (newVal === 0) { limparMemoriaTotal(); alert("Memória limpa!"); } 
-            else { countConvos = newVal; saveState(); }
-            updateDashboardUI();
-        }
-    };
+// --- ATUALIZAR UI ---
+function updateDashboardUI() {
+    document.getElementById('ui-count').innerText = `${countConvos}/${targetConvos}`;
+    document.getElementById('ui-balao').innerText = countBalao; 
+    document.getElementById('ui-avaliacao').innerText = countAvaliacao;
     
-    btnClose.onclick = (e) => { e.stopPropagation(); toggleDashboard(false); };
-    dashboard.onclick = (e) => { if (!isExpanded && !isDragging) toggleDashboard(true); };
+    const progress = Math.min(100, (countConvos / targetConvos) * 100);
+    document.getElementById('ui-progress').style.width = `${progress}%`;
+}
 
-    dragHandle.onmousedown = (e) => {
-        if (e.target.closest('.compact-btn')) return; 
-        e.preventDefault(); ensureTopLeft(); isDragging = false; 
-        pos3 = e.clientX; pos4 = e.clientY;
-        document.onmouseup = () => { document.onmouseup = null; document.onmousemove = null; };
-        document.onmousemove = (e) => {
-            isDragging = true; e.preventDefault();
-            pos1 = pos3 - e.clientX; pos2 = pos4 - e.clientY; pos3 = e.clientX; pos4 = e.clientY;
-            let newTop = dashboard.offsetTop - pos2; let newLeft = dashboard.offsetLeft - pos1;
-            dashboard.style.top = Math.max(0, Math.min(newTop, window.innerHeight - dashboard.offsetHeight - 10)) + "px";
-            dashboard.style.left = Math.max(0, Math.min(newLeft, window.innerWidth - dashboard.offsetWidth - 10)) + "px";
-        };
+updateDashboardUI();
+
+// --- EVENTOS DO DASHBOARD ---
+const dashboard = document.getElementById('mini-dashboard');
+const dragHandle = document.getElementById('drag-handle');
+const btnClose = document.getElementById('btn-close');
+const btnEdit = document.getElementById('btn-edit');
+let isExpanded = false, isDragging = false, pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+
+function ensureTopLeft() {
+    if (!dashboard.style.top) {
+        dashboard.style.top = dashboard.offsetTop + "px"; dashboard.style.left = dashboard.offsetLeft + "px";
+        dashboard.style.bottom = "auto"; dashboard.style.right = "auto";
+    }
+}
+
+function toggleDashboard(expand) {
+    if (isExpanded === expand) return;
+    ensureTopLeft();
+    const rectBefore = dashboard.getBoundingClientRect();
+    const anchorBottom = rectBefore.bottom > (window.innerHeight / 2);
+    isExpanded = expand;
+    dashboard.className = expand ? "expanded" : "collapsed";
+
+    setTimeout(() => {
+        const rectAfter = dashboard.getBoundingClientRect();
+        let newTop = dashboard.offsetTop; let newLeft = dashboard.offsetLeft;
+        if (anchorBottom) newTop = rectBefore.bottom - rectAfter.height;
+        newTop = Math.max(0, Math.min(newTop, window.innerHeight - rectAfter.height - 10));
+        newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - rectAfter.width - 10));
+        dashboard.style.top = newTop + "px"; dashboard.style.left = newLeft + "px";
+    }, 10);
+}
+
+btnEdit.onclick = (e) => {
+    e.stopPropagation();
+    const input = prompt("Atualizar contagem de conversas (Digite 0 para resetar tudo):", countConvos);
+    if (input !== null && !isNaN(input) && input.trim() !== "") {
+        const newVal = Math.max(0, parseInt(input, 10));
+        if (newVal === 0) { limparMemoriaTotal(); alert("Memória limpa!"); } 
+        else { countConvos = newVal; saveState(); }
+        updateDashboardUI();
+    }
+};
+
+btnClose.onclick = (e) => { e.stopPropagation(); toggleDashboard(false); };
+dashboard.onclick = (e) => { if (!isExpanded && !isDragging) toggleDashboard(true); };
+
+dragHandle.onmousedown = (e) => {
+    if (e.target.closest('.compact-btn')) return; 
+    e.preventDefault(); ensureTopLeft(); isDragging = false; 
+    pos3 = e.clientX; pos4 = e.clientY;
+    document.onmouseup = () => { document.onmouseup = null; document.onmousemove = null; };
+    document.onmousemove = (e) => {
+        isDragging = true; e.preventDefault();
+        pos1 = pos3 - e.clientX; pos2 = pos4 - e.clientY; pos3 = e.clientX; pos4 = e.clientY;
+        let newTop = dashboard.offsetTop - pos2; let newLeft = dashboard.offsetLeft - pos1;
+        dashboard.style.top = Math.max(0, Math.min(newTop, window.innerHeight - dashboard.offsetHeight - 10)) + "px";
+        dashboard.style.left = Math.max(0, Math.min(newLeft, window.innerWidth - dashboard.offsetWidth - 10)) + "px";
+    };
+};
+
+// --- IDENTIFICAÇÃO E TEMPO REAL DOS ATENDIMENTOS ---
+let generatedInteractionId = 0;
+let lastActiveInteractionId = null;
+let lastDisconnectHandledAt = 0;
+let lastBalloonHandledAt = 0;
+let lastConcludedHandledAt = 0;
+let pendingBalloon = null;
+const pendingRemovalTimers = new Map();
+
+function getInteractionId(group) {
+    if (!group) return null;
+
+    const dataId =
+        group.getAttribute('data-interaction-id') ||
+        group.getAttribute('data-conversation-id') ||
+        group.getAttribute('data-contact-id');
+    if (dataId) return dataId;
+    if (group.id) return group.id;
+    if (group.dataset.dashboardInteractionId) return group.dataset.dashboardInteractionId;
+
+    const selected = group.matches(
+        '.is-selected, [aria-selected="true"], .selected, .active'
+    );
+    const urlId = selected ? getIdFromUrl() : null;
+    if (urlId) return urlId;
+
+    generatedInteractionId++;
+    group.dataset.dashboardInteractionId = `dashboard-${Date.now()}-${generatedInteractionId}`;
+    return group.dataset.dashboardInteractionId;
+}
+
+function getActiveInteractionId(path = []) {
+    const pathId = getIdFromPath(path);
+    if (pathId && (chatStartTimes[pathId] || path.length > 0)) return pathId;
+
+    const activeGroup = document.querySelector(
+        '.interaction-group.is-selected, ' +
+        '.interaction-group[aria-selected="true"], ' +
+        '.interaction-group.selected, ' +
+        '.interaction-group.active'
+    );
+    if (activeGroup) return getInteractionId(activeGroup);
+
+    if (pathId) return pathId;
+    if (lastActiveInteractionId && chatStartTimes[lastActiveInteractionId]) {
+        return lastActiveInteractionId;
+    }
+
+    const pendingIds = Object.keys(interactionPaths).filter(id =>
+        chatStartTimes[id] && interactionPaths[id] !== 'ATIVO'
+    );
+    if (pendingIds.length === 1) return pendingIds[0];
+
+    const knownIds = Object.keys(chatStartTimes).filter(id => !finalizedIds.has(id));
+    if (knownIds.length === 1) return knownIds[0];
+
+    return null;
+}
+
+function getInteractionIdFromFrameSource(sourceWindow) {
+    if (!sourceWindow) return null;
+
+    for (const iframe of document.querySelectorAll('iframe')) {
+        try {
+            if (iframe.contentWindow !== sourceWindow) continue;
+            const group = iframe.closest('.interaction-group');
+            return group ? getInteractionId(group) : null;
+        } catch (_) {
+            // Ignora frames que o navegador não permite inspecionar.
+        }
+    }
+
+    return null;
+}
+
+function ensureInteractionTracked(uniqueId) {
+    if (!uniqueId || finalizedIds.has(uniqueId)) return false;
+
+    let changed = false;
+    if (!Number.isFinite(Number(chatStartTimes[uniqueId]))) {
+        chatStartTimes[uniqueId] = Date.now();
+        changed = true;
+    }
+    if (!interactionPaths[uniqueId]) {
+        interactionPaths[uniqueId] = 'ATIVO';
+        changed = true;
+    }
+    return changed;
+}
+
+function clearInteractionTracking(uniqueId) {
+    delete chatStartTimes[uniqueId];
+    delete interactionPaths[uniqueId];
+
+    const removalTimer = pendingRemovalTimers.get(uniqueId);
+    if (removalTimer) clearTimeout(removalTimer);
+    pendingRemovalTimers.delete(uniqueId);
+
+    if (lastActiveInteractionId === uniqueId) lastActiveInteractionId = null;
+}
+
+function finalizeInteraction(uniqueId, flow) {
+    if (!uniqueId || finalizedIds.has(uniqueId)) return false;
+
+    ensureInteractionTracked(uniqueId);
+    const finalFlow = flow || interactionPaths[uniqueId] || 'ATIVO';
+
+    if (finalFlow === 'BALAO') countBalao++;
+    else if (finalFlow === 'DESCONECTAR') countAvaliacao++;
+
+    if (finalFlow === 'BALAO') pendingBalloon = null;
+
+    finalizedIds.add(uniqueId);
+    while (finalizedIds.size > 1000) {
+        finalizedIds.delete(finalizedIds.values().next().value);
+    }
+
+    clearInteractionTracking(uniqueId);
+    saveState();
+    updateDashboardUI();
+    return true;
+}
+
+function registerDisconnect(activeId) {
+    const now = Date.now();
+
+    // Evita duplicidade caso o mesmo clique seja percebido no iframe e no topo.
+    if (now - lastDisconnectHandledAt < 1200) return false;
+    lastDisconnectHandledAt = now;
+
+    if (activeId) {
+        lastActiveInteractionId = activeId;
+        return finalizeInteraction(activeId, 'DESCONECTAR');
+    }
+
+    // O botão da imagem fica fora do bloco que contém o ID do cliente.
+    // Mesmo sem esse ID, o clique precisa subir no contador.
+    countAvaliacao++;
+    saveState();
+    updateDashboardUI();
+    return true;
+}
+
+function registerBalloon(activeId) {
+    const now = Date.now();
+    if (now - lastBalloonHandledAt < 1200) return false;
+    lastBalloonHandledAt = now;
+
+    pendingBalloon = {
+        interactionId: activeId || null,
+        createdAt: now
     };
 
-    // --- IDENTIFICAÇÃO E TEMPO REAL DOS ATENDIMENTOS ---
-    let generatedInteractionId = 0;
-    let lastActiveInteractionId = null;
-    let lastDisconnectHandledAt = 0;
-    let lastBalloonHandledAt = 0;
-    let lastConcludedHandledAt = 0;
-    let pendingBalloon = null;
-    const pendingRemovalTimers = new Map();
-
-    function getInteractionId(group) {
-        if (!group) return null;
-
-        const dataId =
-            group.getAttribute('data-interaction-id') ||
-            group.getAttribute('data-conversation-id') ||
-            group.getAttribute('data-contact-id');
-        if (dataId) return dataId;
-        if (group.id) return group.id;
-        if (group.dataset.dashboardInteractionId) return group.dataset.dashboardInteractionId;
-
-        const selected = group.matches(
-            '.is-selected, [aria-selected="true"], .selected, .active'
-        );
-        const urlId = selected ? getIdFromUrl() : null;
-        if (urlId) return urlId;
-
-        generatedInteractionId++;
-        group.dataset.dashboardInteractionId = `dashboard-${Date.now()}-${generatedInteractionId}`;
-        return group.dataset.dashboardInteractionId;
+    if (activeId) {
+        lastActiveInteractionId = activeId;
+        ensureInteractionTracked(activeId);
+        interactionPaths[activeId] = 'BALAO';
+        saveState();
     }
 
-    function getActiveInteractionId(path = []) {
-        const pathId = getIdFromPath(path);
-        if (pathId && (chatStartTimes[pathId] || path.length > 0)) return pathId;
+    return true;
+}
 
-        const activeGroup = document.querySelector(
-            '.interaction-group.is-selected, ' +
-            '.interaction-group[aria-selected="true"], ' +
-            '.interaction-group.selected, ' +
-            '.interaction-group.active'
-        );
-        if (activeGroup) return getInteractionId(activeGroup);
+function completeCurrentFlow(activeId) {
+    const now = Date.now();
+    if (now - lastConcludedHandledAt < 1200) return false;
+    lastConcludedHandledAt = now;
 
-        if (pathId) return pathId;
-        if (lastActiveInteractionId && chatStartTimes[lastActiveInteractionId]) {
-            return lastActiveInteractionId;
-        }
+    const pendingIsValid =
+        pendingBalloon &&
+        now - pendingBalloon.createdAt <= 30 * 60 * 1000;
+    if (!pendingIsValid) pendingBalloon = null;
 
-        const pendingIds = Object.keys(interactionPaths).filter(id =>
-            chatStartTimes[id] && interactionPaths[id] !== 'ATIVO'
-        );
-        if (pendingIds.length === 1) return pendingIds[0];
+    const finalId =
+        activeId ||
+        (pendingBalloon ? pendingBalloon.interactionId : null);
 
-        const knownIds = Object.keys(chatStartTimes).filter(id => !finalizedIds.has(id));
-        if (knownIds.length === 1) return knownIds[0];
-
-        return null;
-    }
-
-    function getInteractionIdFromFrameSource(sourceWindow) {
-        if (!sourceWindow) return null;
-
-        for (const iframe of document.querySelectorAll('iframe')) {
-            try {
-                if (iframe.contentWindow !== sourceWindow) continue;
-                const group = iframe.closest('.interaction-group');
-                return group ? getInteractionId(group) : null;
-            } catch (_) {
-                // Ignora frames que o navegador não permite inspecionar.
-            }
-        }
-
-        return null;
-    }
-
-    function ensureInteractionTracked(uniqueId) {
-        if (!uniqueId || finalizedIds.has(uniqueId)) return false;
-
-        let changed = false;
-        if (!Number.isFinite(Number(chatStartTimes[uniqueId]))) {
-            chatStartTimes[uniqueId] = Date.now();
-            changed = true;
-        }
-        if (!interactionPaths[uniqueId]) {
-            interactionPaths[uniqueId] = 'ATIVO';
-            changed = true;
-        }
-        return changed;
-    }
-
-    function clearInteractionTracking(uniqueId) {
-        delete chatStartTimes[uniqueId];
-        delete interactionPaths[uniqueId];
-
-        const removalTimer = pendingRemovalTimers.get(uniqueId);
-        if (removalTimer) clearTimeout(removalTimer);
-        pendingRemovalTimers.delete(uniqueId);
-
-        if (lastActiveInteractionId === uniqueId) lastActiveInteractionId = null;
-    }
-
-    function finalizeInteraction(uniqueId, flow) {
-        if (!uniqueId || finalizedIds.has(uniqueId)) return false;
-
-        ensureInteractionTracked(uniqueId);
-        const finalFlow = flow || interactionPaths[uniqueId] || 'ATIVO';
-
-        if (finalFlow === 'BALAO') countBalao++;
-        else if (finalFlow === 'DESCONECTAR') countAvaliacao++;
+    if (finalId) {
+        const trackedFlow = interactionPaths[finalId];
+        const finalFlow =
+            trackedFlow && trackedFlow !== 'ATIVO'
+                ? trackedFlow
+                : (pendingBalloon ? 'BALAO' : 'ATIVO');
 
         if (finalFlow === 'BALAO') pendingBalloon = null;
-
-        finalizedIds.add(uniqueId);
-        while (finalizedIds.size > 1000) {
-            finalizedIds.delete(finalizedIds.values().next().value);
-        }
-
-        clearInteractionTracking(uniqueId);
-        saveState();
-        updateDashboardUI();
-        return true;
+        return finalizeInteraction(finalId, finalFlow);
     }
 
-    function registerDisconnect(activeId) {
-        const now = Date.now();
+    if (!pendingBalloon) return false;
 
-        // Evita duplicidade caso o mesmo clique seja percebido no iframe e no topo.
-        if (now - lastDisconnectHandledAt < 1200) return false;
-        lastDisconnectHandledAt = now;
+    countBalao++;
+    pendingBalloon = null;
+    saveState();
+    updateDashboardUI();
+    return true;
+}
 
-        if (activeId) {
-            lastActiveInteractionId = activeId;
-            return finalizeInteraction(activeId, 'DESCONECTAR');
+function interactionIsPresent(uniqueId) {
+    return Array.from(document.querySelectorAll('.interaction-group'))
+        .some(group => getInteractionId(group) === uniqueId);
+}
+
+function scheduleRemovalFinalization(uniqueId) {
+    if (!uniqueId || finalizedIds.has(uniqueId) || pendingRemovalTimers.has(uniqueId)) return;
+
+    const timer = setTimeout(() => {
+        pendingRemovalTimers.delete(uniqueId);
+        if (interactionIsPresent(uniqueId) || finalizedIds.has(uniqueId)) return;
+
+        // Finaliza o atendimento quando ele some sem passar pelo botão "Concluído".
+        finalizeInteraction(uniqueId, interactionPaths[uniqueId] || 'ATIVO');
+    }, 750);
+
+    pendingRemovalTimers.set(uniqueId, timer);
+}
+
+function scanInteractions() {
+    let changed = false;
+
+    document.querySelectorAll('.interaction-group').forEach(group => {
+        const uniqueId = getInteractionId(group);
+        if (!uniqueId) return;
+
+        const removalTimer = pendingRemovalTimers.get(uniqueId);
+        if (removalTimer) {
+            clearTimeout(removalTimer);
+            pendingRemovalTimers.delete(uniqueId);
         }
 
-        // O botão da imagem fica fora do bloco que contém o ID do cliente.
-        // Mesmo sem esse ID, o clique precisa subir no contador.
-        countAvaliacao++;
-        saveState();
-        updateDashboardUI();
-        return true;
+        if (ensureInteractionTracked(uniqueId)) changed = true;
+        if (group.matches('.is-selected, [aria-selected="true"], .selected, .active')) {
+            lastActiveInteractionId = uniqueId;
+        }
+    });
+
+    return changed;
+}
+
+// --- OBSERVERS: CRIAÇÃO E DESTRUIÇÃO ---
+const domObserver = new MutationObserver((mutations) => {
+    let atualizou = false;
+
+    // Aguarda um pouco antes de considerar encerrado, evitando contar uma mera
+    // movimentação/recriação do elemento como finalização.
+    mutations.forEach(mutation => {
+        if (mutation.removedNodes && mutation.removedNodes.length > 0) {
+            mutation.removedNodes.forEach(node => {
+                if (node.nodeType === 1) { 
+                    let groups = [];
+                    if (node.classList && node.classList.contains('interaction-group')) groups.push(node);
+                    if (node.querySelectorAll) node.querySelectorAll('.interaction-group').forEach(g => groups.push(g));
+                    
+                    groups.forEach(group => {
+                        const uniqueId = getInteractionId(group);
+                        if (chatStartTimes[uniqueId]) scheduleRemovalFinalization(uniqueId);
+                    });
+                }
+            });
+        }
+    });
+
+    // DETECTOR DE NOVAS CONVERSAS E VALIDAÇÃO DE 1 MINUTO
+    document.querySelectorAll('.timer-completed').forEach(timer => {
+        const group = timer.closest('.interaction-group');
+        if (group) {
+            const uniqueId = getInteractionId(group);
+            if (!group.dataset.dashCounted && !countedIds.has(uniqueId)) {
+                group.dataset.dashCounted = 'true'; countedIds.add(uniqueId); countConvos++; atualizou = true;
+            } else if (!group.dataset.dashCounted && countedIds.has(uniqueId)) {
+                group.dataset.dashCounted = 'true'; 
+            }
+        }
+    });
+
+    if (scanInteractions()) atualizou = true;
+
+    if (atualizou) { saveState(); updateDashboardUI(); }
+});
+
+domObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+if (scanInteractions()) saveState();
+
+// --- RECEBE O AVISO DO ESPIÃO DO IFRAME ---
+window.addEventListener('message', (event) => {
+    if (!event.data) return;
+    const supportedActions = [
+        'genesys_desconectar_clicado',
+        'genesys_balao_clicado',
+        'genesys_concluido_clicado'
+    ];
+    if (!supportedActions.includes(event.data.action)) return;
+
+    const informedId = typeof event.data.interactionId === 'string' ? event.data.interactionId : null;
+    const frameId = getInteractionIdFromFrameSource(event.source);
+    const activeId =
+        (informedId && chatStartTimes[informedId] ? informedId : null) ||
+        frameId ||
+        getActiveInteractionId([]) ||
+        informedId;
+
+    if (event.data.action === 'genesys_desconectar_clicado') {
+        registerDisconnect(activeId);
+    } else if (event.data.action === 'genesys_balao_clicado') {
+        registerBalloon(activeId);
+    } else if (event.data.action === 'genesys_concluido_clicado') {
+        completeCurrentFlow(activeId);
+    }
+});
+
+// --- ESCUTADOR MESTRE DE CLIQUES (A MÁGICA ACONTECE AQUI) ---
+document.addEventListener('click', (e) => {
+    const path = e.composedPath ? e.composedPath() : [e.target];
+    const activeId = getActiveInteractionId(path);
+    const disconnectControl = findDisconnectControl(path);
+    const balloonControl = findBalloonControl(path);
+    const concludedControl = findConcludedControl(path);
+
+    let clickedTransfer = false;
+    let clickedBalao = Boolean(balloonControl && !isDisabledControl(balloonControl));
+    let clickedDesconectarMain = Boolean(disconnectControl && !isDisabledControl(disconnectControl));
+    let clickedConcluido = Boolean(concludedControl);
+    let isConcluidoDisabled = Boolean(concludedControl && isDisabledControl(concludedControl));
+    let clickedSair = false;
+
+    for (let i = 0; i < path.length; i++) {
+        let el = path[i];
+        if (!el || el.nodeType !== 1) continue;
+
+        const aria = (el.getAttribute('aria-label') || '').toUpperCase();
+        const title = (el.getAttribute('title') || '').toUpperCase();
+        const dataQa = (el.getAttribute('data-qa-id') || '').toUpperCase();
+        const text = (el.innerText || el.textContent || '').toUpperCase().trim();
+        const href = (el.getAttribute('href') || '').toUpperCase();
+
+        // 1. TRANSFERÊNCIA (Duas setas)
+        if (aria.includes('TRANSFER') || title.includes('TRANSFER') || dataQa.includes('TRANSFER')) {
+            clickedTransfer = true;
+        }
+
+        // 2. BALÃO
+        if (aria.includes('TÉRMINO') || aria.includes('WRAP-UP') || aria.includes('WRAPUP') || dataQa.includes('WRAPUP') || title.includes('TÉRMINO')) {
+            if (!dataQa.includes('SAVE') && !text.includes('CONCLUÍDO')) {
+                clickedBalao = true;
+            }
+        }
+
+        // 3. CONCLUÍDO (Botão Azul Tabulação)
+        if (text === 'CONCLUÍDO' || text === 'DONE' || dataQa.includes('WRAPUP-SAVE') || aria.includes('CONCLUIR') || text === 'SALVAR') {
+            clickedConcluido = true;
+            if (isDisabledControl(el)) {
+                isConcluidoDisabled = true;
+            }
+        }
+        
+        // 4. SAIR
+        if (aria.match(/SAIR|LOG OFF|LOGOUT|FAZER LOGOFF/i) || href.match(/LOGOUT/i)) {
+            clickedSair = true;
+        }
     }
 
-    function registerBalloon(activeId) {
-        const now = Date.now();
-        if (now - lastBalloonHandledAt < 1200) return false;
-        lastBalloonHandledAt = now;
-
-        pendingBalloon = {
-            interactionId: activeId || null,
-            createdAt: now
-        };
-
-        if (activeId) {
-            lastActiveInteractionId = activeId;
-            ensureInteractionTracked(activeId);
-            interactionPaths[activeId] = 'BALAO';
+    // --- REGISTRA A TRILHA DO ATENDIMENTO ---
+    if (activeId) {
+        lastActiveInteractionId = activeId;
+        ensureInteractionTracked(activeId);
+        
+        if (clickedTransfer) {
+            interactionPaths[activeId] = 'TRANSFER';
             saveState();
         }
-
-        return true;
     }
 
-    function completeCurrentFlow(activeId) {
-        const now = Date.now();
-        if (now - lastConcludedHandledAt < 1200) return false;
-        lastConcludedHandledAt = now;
+    if (clickedBalao) {
+        registerBalloon(activeId);
+    }
 
-        const pendingIsValid =
-            pendingBalloon &&
-            now - pendingBalloon.createdAt <= 30 * 60 * 1000;
-        if (!pendingIsValid) pendingBalloon = null;
+    if (clickedDesconectarMain) {
+        registerDisconnect(activeId);
+    }
 
-        const finalId =
-            activeId ||
-            (pendingBalloon ? pendingBalloon.interactionId : null);
+    // --- FINALIZA O FLUXO DO BALÃO/DA TABULAÇÃO ---
+    if (clickedConcluido && !isConcluidoDisabled) {
+        completeCurrentFlow(activeId);
+    }
 
-        if (finalId) {
-            const trackedFlow = interactionPaths[finalId];
-            const finalFlow =
-                trackedFlow && trackedFlow !== 'ATIVO'
-                    ? trackedFlow
-                    : (pendingBalloon ? 'BALAO' : 'ATIVO');
-
-            if (finalFlow === 'BALAO') pendingBalloon = null;
-            return finalizeInteraction(finalId, finalFlow);
-        }
-
-        if (!pendingBalloon) return false;
-
-        countBalao++;
-        pendingBalloon = null;
-        saveState();
+    if (clickedSair) {
+        limparMemoriaTotal();
         updateDashboardUI();
-        return true;
     }
 
-    function interactionIsPresent(uniqueId) {
-        return Array.from(document.querySelectorAll('.interaction-group'))
-            .some(group => getInteractionId(group) === uniqueId);
-    }
-
-    function scheduleRemovalFinalization(uniqueId) {
-        if (!uniqueId || finalizedIds.has(uniqueId) || pendingRemovalTimers.has(uniqueId)) return;
-
-        const timer = setTimeout(() => {
-            pendingRemovalTimers.delete(uniqueId);
-            if (interactionIsPresent(uniqueId) || finalizedIds.has(uniqueId)) return;
-
-            // Finaliza o atendimento quando ele some sem passar pelo botão "Concluído".
-            finalizeInteraction(uniqueId, interactionPaths[uniqueId] || 'ATIVO');
-        }, 750);
-
-        pendingRemovalTimers.set(uniqueId, timer);
-    }
-
-    function scanInteractions() {
-        let changed = false;
-
-        document.querySelectorAll('.interaction-group').forEach(group => {
-            const uniqueId = getInteractionId(group);
-            if (!uniqueId) return;
-
-            const removalTimer = pendingRemovalTimers.get(uniqueId);
-            if (removalTimer) {
-                clearTimeout(removalTimer);
-                pendingRemovalTimers.delete(uniqueId);
-            }
-
-            if (ensureInteractionTracked(uniqueId)) changed = true;
-            if (group.matches('.is-selected, [aria-selected="true"], .selected, .active')) {
-                lastActiveInteractionId = uniqueId;
-            }
-        });
-
-        return changed;
-    }
-
-    // --- OBSERVERS: CRIAÇÃO E DESTRUIÇÃO ---
-    const domObserver = new MutationObserver((mutations) => {
-        let atualizou = false;
-
-        // Aguarda um pouco antes de considerar encerrado, evitando contar uma mera
-        // movimentação/recriação do elemento como finalização.
-        mutations.forEach(mutation => {
-            if (mutation.removedNodes && mutation.removedNodes.length > 0) {
-                mutation.removedNodes.forEach(node => {
-                    if (node.nodeType === 1) { 
-                        let groups = [];
-                        if (node.classList && node.classList.contains('interaction-group')) groups.push(node);
-                        if (node.querySelectorAll) node.querySelectorAll('.interaction-group').forEach(g => groups.push(g));
-                        
-                        groups.forEach(group => {
-                            const uniqueId = getInteractionId(group);
-                            if (chatStartTimes[uniqueId]) scheduleRemovalFinalization(uniqueId);
-                        });
-                    }
-                });
-            }
-        });
-
-        // DETECTOR DE NOVAS CONVERSAS E VALIDAÇÃO DE 1 MINUTO
-        document.querySelectorAll('.timer-completed').forEach(timer => {
-            const group = timer.closest('.interaction-group');
-            if (group) {
-                const uniqueId = getInteractionId(group);
-                if (!group.dataset.dashCounted && !countedIds.has(uniqueId)) {
-                    group.dataset.dashCounted = 'true'; countedIds.add(uniqueId); countConvos++; atualizou = true;
-                } else if (!group.dataset.dashCounted && countedIds.has(uniqueId)) {
-                    group.dataset.dashCounted = 'true'; 
-                }
-            }
-        });
-
-        if (scanInteractions()) atualizou = true;
-
-        if (atualizou) { saveState(); updateDashboardUI(); }
-    });
-    
-    domObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
-    if (scanInteractions()) saveState();
-
-    // --- RECEBE O AVISO DO ESPIÃO DO IFRAME ---
-    window.addEventListener('message', (event) => {
-        if (!event.data) return;
-        const supportedActions = [
-            'genesys_desconectar_clicado',
-            'genesys_balao_clicado',
-            'genesys_concluido_clicado'
-        ];
-        if (!supportedActions.includes(event.data.action)) return;
-
-        const informedId = typeof event.data.interactionId === 'string' ? event.data.interactionId : null;
-        const frameId = getInteractionIdFromFrameSource(event.source);
-        const activeId =
-            (informedId && chatStartTimes[informedId] ? informedId : null) ||
-            frameId ||
-            getActiveInteractionId([]) ||
-            informedId;
-
-        if (event.data.action === 'genesys_desconectar_clicado') {
-            registerDisconnect(activeId);
-        } else if (event.data.action === 'genesys_balao_clicado') {
-            registerBalloon(activeId);
-        } else if (event.data.action === 'genesys_concluido_clicado') {
-            completeCurrentFlow(activeId);
-        }
-    });
-
-    // --- ESCUTADOR MESTRE DE CLIQUES (A MÁGICA ACONTECE AQUI) ---
-    document.addEventListener('click', (e) => {
-        const path = e.composedPath ? e.composedPath() : [e.target];
-        const activeId = getActiveInteractionId(path);
-        const disconnectControl = findDisconnectControl(path);
-        const balloonControl = findBalloonControl(path);
-        const concludedControl = findConcludedControl(path);
-
-        let clickedTransfer = false;
-        let clickedBalao = Boolean(balloonControl && !isDisabledControl(balloonControl));
-        let clickedDesconectarMain = Boolean(disconnectControl && !isDisabledControl(disconnectControl));
-        let clickedConcluido = Boolean(concludedControl);
-        let isConcluidoDisabled = Boolean(concludedControl && isDisabledControl(concludedControl));
-        let clickedSair = false;
-
-        for (let i = 0; i < path.length; i++) {
-            let el = path[i];
-            if (!el || el.nodeType !== 1) continue;
-
-            const aria = (el.getAttribute('aria-label') || '').toUpperCase();
-            const title = (el.getAttribute('title') || '').toUpperCase();
-            const dataQa = (el.getAttribute('data-qa-id') || '').toUpperCase();
-            const text = (el.innerText || el.textContent || '').toUpperCase().trim();
-            const href = (el.getAttribute('href') || '').toUpperCase();
-
-            // 1. TRANSFERÊNCIA (Duas setas)
-            if (aria.includes('TRANSFER') || title.includes('TRANSFER') || dataQa.includes('TRANSFER')) {
-                clickedTransfer = true;
-            }
-
-            // 2. BALÃO
-            if (aria.includes('TÉRMINO') || aria.includes('WRAP-UP') || aria.includes('WRAPUP') || dataQa.includes('WRAPUP') || title.includes('TÉRMINO')) {
-                if (!dataQa.includes('SAVE') && !text.includes('CONCLUÍDO')) {
-                    clickedBalao = true;
-                }
-            }
-
-            // 3. CONCLUÍDO (Botão Azul Tabulação)
-            if (text === 'CONCLUÍDO' || text === 'DONE' || dataQa.includes('WRAPUP-SAVE') || aria.includes('CONCLUIR') || text === 'SALVAR') {
-                clickedConcluido = true;
-                if (isDisabledControl(el)) {
-                    isConcluidoDisabled = true;
-                }
-            }
-            
-            // 4. SAIR
-            if (aria.match(/SAIR|LOG OFF|LOGOUT|FAZER LOGOFF/i) || href.match(/LOGOUT/i)) {
-                clickedSair = true;
-            }
-        }
-
-        // --- REGISTRA A TRILHA DO ATENDIMENTO ---
-        if (activeId) {
-            lastActiveInteractionId = activeId;
-            ensureInteractionTracked(activeId);
-            
-            if (clickedTransfer) {
-                interactionPaths[activeId] = 'TRANSFER';
-                saveState();
-            }
-        }
-
-        if (clickedBalao) {
-            registerBalloon(activeId);
-        }
-
-        if (clickedDesconectarMain) {
-            registerDisconnect(activeId);
-        }
-
-        // --- FINALIZA O FLUXO DO BALÃO/DA TABULAÇÃO ---
-        if (clickedConcluido && !isConcluidoDisabled) {
-            completeCurrentFlow(activeId);
-        }
-
-        if (clickedSair) {
-            limparMemoriaTotal();
-            updateDashboardUI();
-        }
-
-    }, true); 
+}, true); 
 
 })();
