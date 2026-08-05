@@ -1134,9 +1134,7 @@ function bindDisconnectControl(control) {
     if (!control || boundDisconnectControls.has(control) || !isDisconnectControl(control)) return;
 
     boundDisconnectControls.add(control);
-    // pointerdown ocorre antes de o sistema remover o atendimento da tela.
     control.addEventListener('pointerdown', announceDirectDisconnect, true);
-    // Mantém compatibilidade com clique por teclado e navegadores sem Pointer Events.
     control.addEventListener('click', announceDirectDisconnect, true);
 }
 
@@ -1172,9 +1170,7 @@ function inspectAccessibleFrame(iframe) {
 
     try {
         if (iframe.contentDocument) observeDisconnectRoot(iframe.contentDocument);
-    } catch (_) {
-        // Frames de outro domínio são tratados pela cópia do userscript dentro deles.
-    }
+    } catch (_) {}
 }
 
 function scanDisconnectTree(root) {
@@ -1182,10 +1178,8 @@ function scanDisconnectTree(root) {
 
     if (root.nodeType === 1) bindTrackedControls(root);
     root.querySelectorAll('button, [role="button"], .btn-main').forEach(bindTrackedControls);
-
     root.querySelectorAll('iframe').forEach(inspectAccessibleFrame);
 
-    // Também procura o botão em componentes que usam Shadow DOM aberto.
     root.querySelectorAll('*').forEach(el => {
         if (el.shadowRoot) observeDisconnectRoot(el.shadowRoot);
     });
@@ -1224,7 +1218,6 @@ function observeDisconnectRoot(root) {
 }
 
 observeDisconnectRoot(document);
-// Varredura de segurança caso o sistema recrie internamente algum frame/componente.
 setInterval(() => scanDisconnectTree(document), 3000);
 
 if (!isTopWindow) {
@@ -1414,45 +1407,6 @@ const KEY_DISCONNECT_FIX_VERSION = 'genesys_dash_disconnect_fix_version';
 const KEY_BALLOON_FIX_VERSION = 'genesys_dash_balloon_fix_version';
 const KEY_RESET_DIA = 'genesys_dash_ultimo_reset';
 
-function verificarResetDiario() {
-    const hoje = new Date().toLocaleDateString('pt-BR');
-    const ultimoReset = localStorage.getItem(KEY_RESET_DIA);
-
-    if (ultimoReset !== hoje) {
-        localStorage.removeItem(KEY_CONVOS);
-        localStorage.removeItem(KEY_BALAO);
-        localStorage.removeItem(KEY_AVALIACAO);
-        localStorage.removeItem(KEY_IDS);
-        localStorage.removeItem(KEY_CHAT_TIMES);
-        localStorage.removeItem(KEY_PATHS);
-        localStorage.removeItem(KEY_FINALIZED_IDS);
-
-        localStorage.setItem(KEY_RESET_DIA, hoje);
-    }
-}
-
-verificarResetDiario();
-const DISCONNECT_FIX_VERSION = '2';
-const BALLOON_FIX_VERSION = '1';
-
-// Recupera uma única vez o atendimento que não foi registrado no teste anterior.
-if (localStorage.getItem(KEY_DISCONNECT_FIX_VERSION) !== DISCONNECT_FIX_VERSION) {
-    const versaoAnterior = localStorage.getItem(KEY_DISCONNECT_FIX_VERSION);
-    const avaliacaoAtual = parseInt(localStorage.getItem(KEY_AVALIACAO), 10) || 0;
-    const avaliacaoCorrigida = versaoAnterior === '1'
-        ? avaliacaoAtual + 1
-        : Math.max(1, avaliacaoAtual);
-    localStorage.setItem(KEY_AVALIACAO, String(avaliacaoCorrigida));
-    localStorage.setItem(KEY_DISCONNECT_FIX_VERSION, DISCONNECT_FIX_VERSION);
-}
-
-// Recupera o encerramento pelo Balão informado como não contabilizado.
-if (localStorage.getItem(KEY_BALLOON_FIX_VERSION) !== BALLOON_FIX_VERSION) {
-    const balaoAtual = parseInt(localStorage.getItem(KEY_BALAO), 10) || 0;
-    localStorage.setItem(KEY_BALAO, String(balaoAtual + 1));
-    localStorage.setItem(KEY_BALLOON_FIX_VERSION, BALLOON_FIX_VERSION);
-}
-
 let countConvos = parseInt(localStorage.getItem(KEY_CONVOS)) || 0;
 let countBalao = parseInt(localStorage.getItem(KEY_BALAO)) || 0;
 let countAvaliacao = parseInt(localStorage.getItem(KEY_AVALIACAO)) || 0;
@@ -1473,6 +1427,40 @@ function limparMemoriaTotal() {
     countedIds.clear(); interactionPaths = {}; finalizedIds.clear();
 }
 
+function verificarResetDiario() {
+    const hoje = new Date().toLocaleDateString('pt-BR');
+    const ultimoReset = localStorage.getItem(KEY_RESET_DIA);
+
+    if (ultimoReset && ultimoReset !== hoje) {
+        limparMemoriaTotal();
+    }
+    
+    localStorage.setItem(KEY_RESET_DIA, hoje);
+}
+
+// Verifica o reset diário sempre que o script inicia (só reseta a meia-noite real agora)
+verificarResetDiario();
+
+const DISCONNECT_FIX_VERSION = '2';
+const BALLOON_FIX_VERSION = '1';
+
+if (localStorage.getItem(KEY_DISCONNECT_FIX_VERSION) !== DISCONNECT_FIX_VERSION) {
+    const versaoAnterior = localStorage.getItem(KEY_DISCONNECT_FIX_VERSION);
+    const avaliacaoAtual = parseInt(localStorage.getItem(KEY_AVALIACAO), 10) || 0;
+    const avaliacaoCorrigida = versaoAnterior === '1'
+        ? avaliacaoAtual + 1
+        : Math.max(1, avaliacaoAtual);
+    localStorage.setItem(KEY_AVALIACAO, String(avaliacaoCorrigida));
+    localStorage.setItem(KEY_DISCONNECT_FIX_VERSION, DISCONNECT_FIX_VERSION);
+}
+
+if (localStorage.getItem(KEY_BALLOON_FIX_VERSION) !== BALLOON_FIX_VERSION) {
+    const balaoAtual = parseInt(localStorage.getItem(KEY_BALAO), 10) || 0;
+    localStorage.setItem(KEY_BALAO, String(balaoAtual + 1));
+    localStorage.setItem(KEY_BALLOON_FIX_VERSION, BALLOON_FIX_VERSION);
+}
+
+
 function saveState() {
     localStorage.setItem(KEY_CONVOS, countConvos); localStorage.setItem(KEY_BALAO, countBalao);
     localStorage.setItem(KEY_AVALIACAO, countAvaliacao);
@@ -1482,7 +1470,6 @@ function saveState() {
     localStorage.setItem(KEY_FINALIZED_IDS, JSON.stringify(Array.from(finalizedIds)));
 }
 
-if (window.location.href.toLowerCase().includes('login')) limparMemoriaTotal();
 
 // --- ATUALIZAR UI ---
 function updateDashboardUI() {
@@ -1682,7 +1669,6 @@ function finalizeInteraction(uniqueId, flow) {
 function registerDisconnect(activeId) {
     const now = Date.now();
 
-    // Evita duplicidade caso o mesmo clique seja percebido no iframe e no topo.
     if (now - lastDisconnectHandledAt < 1200) return false;
     lastDisconnectHandledAt = now;
 
@@ -1691,8 +1677,6 @@ function registerDisconnect(activeId) {
         return finalizeInteraction(activeId, 'DESCONECTAR');
     }
 
-    // O botão da imagem fica fora do bloco que contém o ID do cliente.
-    // Mesmo sem esse ID, o clique precisa subir no contador.
     countAvaliacao++;
     saveState();
     updateDashboardUI();
@@ -1765,7 +1749,6 @@ function scheduleRemovalFinalization(uniqueId) {
         pendingRemovalTimers.delete(uniqueId);
         if (interactionIsPresent(uniqueId) || finalizedIds.has(uniqueId)) return;
 
-        // Finaliza o atendimento quando ele some sem passar pelo botão "Concluído".
         finalizeInteraction(uniqueId, interactionPaths[uniqueId] || 'ATIVO');
     }, 750);
 
@@ -1798,153 +1781,29 @@ function scanInteractions() {
 const domObserver = new MutationObserver((mutations) => {
     let atualizou = false;
 
-    // Aguarda um pouco antes de considerar encerrado, evitando contar uma mera
-    // movimentação/recriação do elemento como finalização.
     mutations.forEach(mutation => {
         if (mutation.removedNodes && mutation.removedNodes.length > 0) {
             mutation.removedNodes.forEach(node => {
                 if (node.nodeType === 1) { 
                     let groups = [];
-                    if (node.classList && node.classList.contains('interaction-group')) groups.push(node);
-                    if (node.querySelectorAll) node.querySelectorAll('.interaction-group').forEach(g => groups.push(g));
-                    
+                    if (node.classList && node.classList.contains('interaction-group')) {
+                        groups.push(node);
+                    } else {
+                        groups = node.querySelectorAll ? Array.from(node.querySelectorAll('.interaction-group')) : [];
+                    }
                     groups.forEach(group => {
-                        const uniqueId = getInteractionId(group);
-                        if (chatStartTimes[uniqueId]) scheduleRemovalFinalization(uniqueId);
+                        const id = getInteractionId(group);
+                        if (id) scheduleRemovalFinalization(id);
                     });
                 }
             });
         }
     });
-
-    // DETECTOR DE NOVAS CONVERSAS E VALIDAÇÃO DE 1 MINUTO
-    document.querySelectorAll('.timer-completed').forEach(timer => {
-        const group = timer.closest('.interaction-group');
-        if (group) {
-            const uniqueId = getInteractionId(group);
-            if (!group.dataset.dashCounted && !countedIds.has(uniqueId)) {
-                group.dataset.dashCounted = 'true'; countedIds.add(uniqueId); countConvos++; atualizou = true;
-            } else if (!group.dataset.dashCounted && countedIds.has(uniqueId)) {
-                group.dataset.dashCounted = 'true'; 
-            }
-        }
-    });
-
+    
     if (scanInteractions()) atualizou = true;
-
-    if (atualizou) { saveState(); updateDashboardUI(); }
+    if (atualizou) saveState();
 });
 
-domObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
-if (scanInteractions()) saveState();
-
-// --- RECEBE O AVISO DO ESPIÃO DO IFRAME ---
-window.addEventListener('message', (event) => {
-    if (!event.data) return;
-    const supportedActions = [
-        'genesys_desconectar_clicado',
-        'genesys_balao_clicado',
-        'genesys_concluido_clicado'
-    ];
-    if (!supportedActions.includes(event.data.action)) return;
-
-    const informedId = typeof event.data.interactionId === 'string' ? event.data.interactionId : null;
-    const frameId = getInteractionIdFromFrameSource(event.source);
-    const activeId =
-        (informedId && chatStartTimes[informedId] ? informedId : null) ||
-        frameId ||
-        getActiveInteractionId([]) ||
-        informedId;
-
-    if (event.data.action === 'genesys_desconectar_clicado') {
-        registerDisconnect(activeId);
-    } else if (event.data.action === 'genesys_balao_clicado') {
-        registerBalloon(activeId);
-    } else if (event.data.action === 'genesys_concluido_clicado') {
-        completeCurrentFlow(activeId);
-    }
-});
-
-// --- ESCUTADOR MESTRE DE CLIQUES (A MÁGICA ACONTECE AQUI) ---
-document.addEventListener('click', (e) => {
-    const path = e.composedPath ? e.composedPath() : [e.target];
-    const activeId = getActiveInteractionId(path);
-    const disconnectControl = findDisconnectControl(path);
-    const balloonControl = findBalloonControl(path);
-    const concludedControl = findConcludedControl(path);
-
-    let clickedTransfer = false;
-    let clickedBalao = Boolean(balloonControl && !isDisabledControl(balloonControl));
-    let clickedDesconectarMain = Boolean(disconnectControl && !isDisabledControl(disconnectControl));
-    let clickedConcluido = Boolean(concludedControl);
-    let isConcluidoDisabled = Boolean(concludedControl && isDisabledControl(concludedControl));
-    let clickedSair = false;
-
-    for (let i = 0; i < path.length; i++) {
-        let el = path[i];
-        if (!el || el.nodeType !== 1) continue;
-
-        const aria = (el.getAttribute('aria-label') || '').toUpperCase();
-        const title = (el.getAttribute('title') || '').toUpperCase();
-        const dataQa = (el.getAttribute('data-qa-id') || '').toUpperCase();
-        const text = (el.innerText || el.textContent || '').toUpperCase().trim();
-        const href = (el.getAttribute('href') || '').toUpperCase();
-
-        // 1. TRANSFERÊNCIA (Duas setas)
-        if (aria.includes('TRANSFER') || title.includes('TRANSFER') || dataQa.includes('TRANSFER')) {
-            clickedTransfer = true;
-        }
-
-        // 2. BALÃO
-        if (aria.includes('TÉRMINO') || aria.includes('WRAP-UP') || aria.includes('WRAPUP') || dataQa.includes('WRAPUP') || title.includes('TÉRMINO')) {
-            if (!dataQa.includes('SAVE') && !text.includes('CONCLUÍDO')) {
-                clickedBalao = true;
-            }
-        }
-
-        // 3. CONCLUÍDO (Botão Azul Tabulação)
-        if (text === 'CONCLUÍDO' || text === 'DONE' || dataQa.includes('WRAPUP-SAVE') || aria.includes('CONCLUIR') || text === 'SALVAR') {
-            clickedConcluido = true;
-            if (isDisabledControl(el)) {
-                isConcluidoDisabled = true;
-            }
-        }
-        
-        // 4. SAIR
-        if (aria.match(/SAIR|LOG OFF|LOGOUT|FAZER LOGOFF/i) || href.match(/LOGOUT/i)) {
-            clickedSair = true;
-        }
-    }
-
-    // --- REGISTRA A TRILHA DO ATENDIMENTO ---
-    if (activeId) {
-        lastActiveInteractionId = activeId;
-        ensureInteractionTracked(activeId);
-        
-        if (clickedTransfer) {
-            interactionPaths[activeId] = 'TRANSFER';
-            saveState();
-        }
-    }
-
-    if (clickedBalao) {
-        registerBalloon(activeId);
-    }
-
-    if (clickedDesconectarMain) {
-        registerDisconnect(activeId);
-    }
-
-    // --- FINALIZA O FLUXO DO BALÃO/DA TABULAÇÃO ---
-    if (clickedConcluido && !isConcluidoDisabled) {
-        completeCurrentFlow(activeId);
-    }
-
-    if (clickedSair) {
-        limparMemoriaTotal();
-        updateDashboardUI();
-    }
-
-}, true); 
+domObserver.observe(document.body, { childList: true, subtree: true });
 
 })();
