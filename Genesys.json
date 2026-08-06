@@ -1,12 +1,4 @@
 // ==UserScript==
-// @name Genesys Helper Suite & Timer
-// @namespace http://your-domain.com/
-// @version 4.1
-// @description Sistema unificado: Cronômetro, Busca Doc e Cópia Instantânea (Visual Ajustado e z-index corrigido).
-// @author AI Assistant
-// @match *://*/*
-// @grant GM_addStyle
-
 // =================================================================
 // PARTE 1: CRONÔMETRO (Mantido original)
 // =================================================================
