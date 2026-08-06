@@ -939,15 +939,7 @@
 
 
     
-// ==UserScript==
-// @name         Mini Dashboard Flutuante (Apenas Dashboard)
-// @namespace    http://tampermonkey.net/
-// @version      8.5
-// @description  Dashboard com contadores de término por Desconectar e Balão com Reset à Meia-Noite
-// @match        *://*/* 
-// @include      *
-// @allFrames    true
-// @grant        none
+
 // ==/UserScript==
 
 (function() {
