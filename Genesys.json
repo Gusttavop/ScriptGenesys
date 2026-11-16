@@ -1287,7 +1287,7 @@
     const KEY_PATHS = 'genesys_dash_paths';
     const KEY_FINALIZED_IDS = 'genesys_dash_finalized_ids_v2';
     const KEY_LAST_RESET_DATE = 'genesys_dash_last_reset_date'; // Nova Chave para o dia
-    const targetConvos = 49;
+    const targetConvos = 40;
 
     let countConvos = parseInt(localStorage.getItem(KEY_CONVOS)) || 0;
     let countBalao = parseInt(localStorage.getItem(KEY_BALAO)) || 0;
